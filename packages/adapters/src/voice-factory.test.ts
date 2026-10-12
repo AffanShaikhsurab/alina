@@ -1,9 +1,11 @@
 import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CartesiaVoiceProvider } from "./cartesia-voice.js";
+import { DeepgramVoiceProvider } from "./deepgram-voice.js";
 import { ElevenLabsVoiceProvider } from "./elevenlabs-voice.js";
 import { FishAudioVoiceProvider } from "./fish-audio-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";
+import { SarvamVoiceProvider } from "./sarvam-voice.js";
 import {
   SCRIPTED_MPEG,
   SCRIPTED_TRANSCRIPT,
@@ -44,12 +46,16 @@ describe("createVoiceProvider", () => {
       "openai",
       "cartesia",
       "fish-audio",
+      "deepgram",
+      "sarvam",
     ]);
     expect(listVoiceCatalog().map((entry) => entry.id)).toEqual([
       "elevenlabs",
       "openai",
       "cartesia",
       "fish-audio",
+      "deepgram",
+      "sarvam",
     ]);
     expect(createVoiceProvider("elevenlabs").describe().id).toBe("elevenlabs");
     expect(createVoiceProvider("openai").describe().capabilities.transcribe).toBe(true);
@@ -633,12 +639,300 @@ describe("FishAudioVoiceProvider", () => {
   });
 });
 
+describe("DeepgramVoiceProvider", () => {
+  it("is in the catalog as a provider that speaks and transcribes", () => {
+    expect(VOICE_CATALOG.find((entry) => entry.id === "deepgram")?.transcribe).toBe(true);
+    const provider = createVoiceProvider("deepgram");
+    expect(provider.describe()).toMatchObject({
+      id: "deepgram",
+      capabilities: { catalog: true, synthesize: true, transcribe: true },
+    });
+    expect(isVoiceProviderId("deepgram")).toBe(true);
+  });
+
+  it("verifies the key against /v1/projects with a Token header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new DeepgramVoiceProvider().verify("dg-test", ctx)).resolves.toEqual({
+      ok: true,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.deepgram.com/v1/projects");
+    const init = fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> };
+    expect(init.headers.authorization).toBe("Token dg-test");
+  });
+
+  it("accepts a key that cannot list projects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 403 })));
+    await expect(new DeepgramVoiceProvider().verify("dg-test", ctx)).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects a key Deepgram does not know", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ err_msg: "Invalid credentials." }), { status: 401 }),
+        ),
+    );
+    const result = await new DeepgramVoiceProvider().verify("dg-test", ctx);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("rejected that key");
+  });
+
+  it("lists Flux and Aura-2 voices without a network round trip", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const voices = await new DeepgramVoiceProvider().listVoices("dg-test", ctx);
+    expect(voices[0]?.id).toBe("flux-hannah-en");
+    expect(voices.some((voice) => voice.id === "aura-2-thalia-en")).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["flux-hannah-en", "https://api.deepgram.com/v2/speak?model=flux-hannah-en&encoding=mp3"],
+    ["aura-2-thalia-en", "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=mp3"],
+  ])("speaks %s through its endpoint as mp3 bytes", async (voiceId, url) => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array([3, 1, 4]).buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const clip = await new DeepgramVoiceProvider().synthesize(
+      { text: "Hello there.", voiceId, apiKey: "dg-test" },
+      ctx,
+    );
+    expect(clip.mimeType).toBe("audio/mpeg");
+    expect([...clip.bytes]).toEqual([3, 1, 4]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(url);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect((init.headers as Record<string, string>).authorization).toBe("Token dg-test");
+    expect(JSON.parse(String(init.body))).toEqual({ text: "Hello there." });
+  });
+
+  it("maps a rejected key while speaking", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 401 })));
+    await expect(
+      new DeepgramVoiceProvider().synthesize(
+        { text: "Hi", voiceId: "flux-hannah-en", apiKey: "dg-test" },
+        ctx,
+      ),
+    ).rejects.toThrow("Deepgram rejected that key");
+  });
+
+  it("posts raw audio to /v1/listen with nova-3 and trims the transcript", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: { channels: [{ alternatives: [{ transcript: "  hello there  " }] }] },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const audio = new Uint8Array([5, 6, 7]);
+    await expect(
+      new DeepgramVoiceProvider().transcribe(
+        { audio, mimeType: "audio/m4a", apiKey: "dg-test" },
+        ctx,
+      ),
+    ).resolves.toEqual({ text: "hello there" });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(`${url.origin}${url.pathname}`).toBe("https://api.deepgram.com/v1/listen");
+    expect(url.searchParams.get("model")).toBe("nova-3");
+    expect(url.searchParams.get("smart_format")).toBe("true");
+    expect(url.searchParams.get("punctuate")).toBe("true");
+    expect(url.searchParams.has("language")).toBe(false);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe("Token dg-test");
+    expect(headers["content-type"]).toBe("audio/mp4");
+    expect([...(init.body as Uint8Array)]).toEqual([5, 6, 7]);
+  });
+
+  it("uses the deployment model and language overrides when they are well formed", async () => {
+    vi.stubEnv("DEEPGRAM_STT_MODEL", "nova-2");
+    vi.stubEnv("DEEPGRAM_STT_LANGUAGE", "en-IN");
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => new Response(JSON.stringify({ results: {} })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      new DeepgramVoiceProvider().transcribe(
+        { audio: new Uint8Array([1]), mimeType: "audio/webm;codecs=opus", apiKey: "dg-test" },
+        ctx,
+      ),
+    ).resolves.toEqual({ text: "" });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get("model")).toBe("nova-2");
+    expect(url.searchParams.get("language")).toBe("en-IN");
+
+    vi.stubEnv("DEEPGRAM_STT_MODEL", "nova-3&callback=x");
+    await new DeepgramVoiceProvider().transcribe(
+      { audio: new Uint8Array([1]), mimeType: "audio/webm", apiKey: "dg-test" },
+      ctx,
+    );
+    const second = new URL(String(fetchMock.mock.calls[1]?.[0]));
+    expect(second.searchParams.get("model")).toBe("nova-3");
+    expect(second.searchParams.has("callback")).toBe(false);
+  });
+
+  it("reports Deepgram's own message when transcription fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ err_msg: "Bad audio." }), { status: 400 }),
+        ),
+    );
+    await expect(
+      new DeepgramVoiceProvider().transcribe(
+        { audio: new Uint8Array([1]), mimeType: "audio/webm", apiKey: "dg-test" },
+        ctx,
+      ),
+    ).rejects.toThrow("transcribing failed: Bad audio.");
+  });
+});
+
+describe("SarvamVoiceProvider", () => {
+  const mp3 = new Uint8Array([0xff, 0xfb, 0x90, 0x00]);
+  const sarvamOk = () =>
+    new Response(
+      JSON.stringify({ request_id: "req-1", audios: [Buffer.from(mp3).toString("base64")] }),
+    );
+
+  it("is in the catalog as a speak-only provider", () => {
+    expect(VOICE_CATALOG.find((entry) => entry.id === "sarvam")?.transcribe).toBe(false);
+    const provider = createVoiceProvider("sarvam");
+    expect(provider.describe()).toMatchObject({
+      id: "sarvam",
+      capabilities: { catalog: true, synthesize: true, transcribe: false },
+    });
+    expect(provider.transcribe).toBeUndefined();
+  });
+
+  it("verifies the key with a two-character request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sarvamOk());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new SarvamVoiceProvider().verify("sv-test", ctx)).resolves.toEqual({ ok: true });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.sarvam.ai/text-to-speech");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect((init.headers as Record<string, string>)["api-subscription-key"]).toBe("sv-test");
+    expect(JSON.parse(String(init.body))).toMatchObject({ text: "ok", language_code: "en-IN" });
+  });
+
+  it("rejects a key Sarvam refuses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: { message: "Invalid API key" } }), { status: 403 }),
+        ),
+    );
+    const result = await new SarvamVoiceProvider().verify("sv-test", ctx);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("rejected that key");
+  });
+
+  it("lists bulbul:v3 speakers with shubh first", async () => {
+    const voices = await new SarvamVoiceProvider().listVoices("sv-test", ctx);
+    expect(voices[0]).toEqual({ id: "shubh", label: "Shubh" });
+    expect(voices.some((voice) => voice.id === "priya")).toBe(true);
+  });
+
+  it("posts the documented JSON body and decodes the base64 mp3", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sarvamOk());
+    vi.stubGlobal("fetch", fetchMock);
+    const clip = await new SarvamVoiceProvider().synthesize(
+      { text: "Namaste.", voiceId: "priya", apiKey: "sv-test" },
+      ctx,
+    );
+    expect(clip.mimeType).toBe("audio/mpeg");
+    expect([...clip.bytes]).toEqual([...mp3]);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["api-subscription-key"]).toBe("sv-test");
+    expect(headers.authorization).toBeUndefined();
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: "Namaste.",
+      language_code: "en-IN",
+      speaker: "priya",
+      model: "bulbul:v3",
+      output_audio_codec: "mp3",
+      speech_sample_rate: 24000,
+    });
+  });
+
+  it("honours the connection model, then the deployment model and language", async () => {
+    vi.stubEnv("SARVAM_TTS_MODEL", "bulbul:v4-flash");
+    vi.stubEnv("SARVAM_TTS_LANGUAGE", "hi-IN");
+    const fetchMock = vi.fn().mockImplementation(async () => sarvamOk());
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new SarvamVoiceProvider();
+    await provider.synthesize(
+      { text: "Hi", voiceId: "priya", apiKey: "sv-test", model: "bulbul:v2" },
+      ctx,
+    );
+    await provider.synthesize({ text: "Hi", voiceId: "priya", apiKey: "sv-test" }, ctx);
+    await provider.synthesize(
+      { text: "Hi", voiceId: "priya", apiKey: "sv-test", model: "not a model" },
+      ctx,
+    );
+    const body = (call: number) =>
+      JSON.parse(String((fetchMock.mock.calls[call]?.[1] as RequestInit | undefined)?.body));
+    expect(body(0)).toMatchObject({ model: "bulbul:v2", language_code: "hi-IN" });
+    expect(body(1)).toMatchObject({ model: "bulbul:v4-flash" });
+    expect(body(2)).toMatchObject({ model: "bulbul:v4-flash" });
+  });
+
+  it("refuses decoded audio over the speech cap", async () => {
+    const oversized = "A".repeat(4 * Math.ceil((MAX_SYNTHESIZED_AUDIO_BYTES + 3) / 3));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ audios: [oversized] }))),
+    );
+    await expect(
+      new SarvamVoiceProvider().synthesize({ text: "Hi", voiceId: "priya", apiKey: "sv" }, ctx),
+    ).rejects.toThrow("Voice response is too large.");
+  });
+
+  it("refuses a declared oversized response before reading it", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers({ "content-length": String(64 * 1024 * 1024) }),
+        body: { cancel },
+      }),
+    );
+    await expect(
+      new SarvamVoiceProvider().synthesize({ text: "Hi", voiceId: "priya", apiKey: "sv" }, ctx),
+    ).rejects.toThrow("Voice response is too large.");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("fails clearly when Sarvam returns no audio", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ request_id: "r", audios: [] }))),
+    );
+    await expect(
+      new SarvamVoiceProvider().synthesize({ text: "Hi", voiceId: "priya", apiKey: "sv" }, ctx),
+    ).rejects.toThrow("Sarvam AI returned no audio.");
+  });
+});
+
 describe("hosted voice response limits", () => {
   it.each([
     ["ElevenLabs", () => new ElevenLabsVoiceProvider(), "voice"],
     ["OpenAI", () => new OpenAIVoiceProvider(), "alloy"],
     ["Cartesia", () => new CartesiaVoiceProvider(), "sonic"],
     ["Fish Audio", () => new FishAudioVoiceProvider(), "voice"],
+    ["Deepgram", () => new DeepgramVoiceProvider(), "flux-hannah-en"],
   ])(
     "rejects an oversized %s speech response before buffering it",
     async (_name, create, voiceId) => {

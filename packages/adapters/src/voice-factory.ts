@@ -1,8 +1,10 @@
 import type { VoiceProvider } from "@rakazo/adapter-kit";
 import { CartesiaVoiceProvider } from "./cartesia-voice.js";
+import { DeepgramVoiceProvider } from "./deepgram-voice.js";
 import { ElevenLabsVoiceProvider } from "./elevenlabs-voice.js";
 import { FishAudioVoiceProvider } from "./fish-audio-voice.js";
 import { OpenAIVoiceProvider } from "./openai-voice.js";
+import { SarvamVoiceProvider } from "./sarvam-voice.js";
 import { SCRIPTED_VOICE_CATALOG_ENTRY, ScriptedVoiceProvider } from "./scripted-voice.js";
 
 export const VOICE_CATALOG = [
@@ -29,6 +31,18 @@ export const VOICE_CATALOG = [
     name: "Fish Audio",
     description: "Voice models, cloning, and expressive speech with optional transcription.",
     transcribe: true,
+  },
+  {
+    id: "deepgram",
+    name: "Deepgram",
+    description: "Nova speech-to-text and Flux / Aura-2 voices.",
+    transcribe: true,
+  },
+  {
+    id: "sarvam",
+    name: "Sarvam AI",
+    description: "Bulbul voices for Indian English and Indic languages.",
+    transcribe: false,
   },
 ] as const;
 
@@ -68,6 +82,10 @@ export function createVoiceProvider(kind: string): VoiceProvider {
       return new CartesiaVoiceProvider();
     case "fish-audio":
       return new FishAudioVoiceProvider();
+    case "deepgram":
+      return new DeepgramVoiceProvider();
+    case "sarvam":
+      return new SarvamVoiceProvider();
     case "scripted":
       if (!scriptedVoiceEnabled()) break;
       return new ScriptedVoiceProvider();
@@ -75,7 +93,7 @@ export function createVoiceProvider(kind: string): VoiceProvider {
       break;
   }
   throw new Error(
-    `Unknown voice provider "${kind}". Use elevenlabs | openai | cartesia | fish-audio.`,
+    `Unknown voice provider "${kind}". Use elevenlabs | openai | cartesia | fish-audio | deepgram | sarvam.`,
   );
 }
 
