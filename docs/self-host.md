@@ -294,6 +294,18 @@ Billing stays off, with no paywall, unless `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_
 `STRIPE_PRICE_ID` are all set (see `.env.example`). Setting only some of them stops the API at
 startup.
 
+### Voice transcription and speech defaults
+
+Users bring their own voice keys in Voice settings. By default one provider, the user's selected
+voice, both speaks and transcribes. Set `RAKAZO_TRANSCRIBE_PROVIDER=deepgram` (any provider whose
+catalog entry transcribes) to send every transcription to that provider once the user has
+connected it, while replies keep speaking with the selected voice, for example Sarvam AI. Voice
+status then reports `transcribeProvider`, and the mobile app records each call turn for the server
+instead of using on-device recognition. Unset, or naming a provider the user has not connected,
+keeps the default behaviour. `DEEPGRAM_STT_MODEL` (default `nova-3`) and `DEEPGRAM_STT_LANGUAGE`
+(default: the model's own) tune Deepgram transcription; `SARVAM_TTS_MODEL` (default `bulbul:v3`)
+and `SARVAM_TTS_LANGUAGE` (default `en-IN`) tune Sarvam AI speech. Malformed values are ignored.
+
 ### Logging
 
 Backend services write structured logs to stdout. `LOG_LEVEL` is `debug`, `info`, `warn`, `error`,
