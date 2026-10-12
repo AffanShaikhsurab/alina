@@ -106,6 +106,8 @@ export interface AppEnv {
   updaterToken: string | undefined;
   /** Current application image tag; used for compose manual-upgrade command selection. */
   imageTag: string | undefined;
+  /** Voice provider every transcription uses once the user connects it; speech keeps the default. */
+  transcribeProvider: string | undefined;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
@@ -241,6 +243,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     updaterUrl,
     updaterToken,
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
+    transcribeProvider: optional(source.RAKAZO_TRANSCRIBE_PROVIDER),
   };
 }
 

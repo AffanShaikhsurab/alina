@@ -286,6 +286,7 @@ import {
 } from "./thread-target.js";
 import {
   disconnectVoiceCredential,
+  findTranscribePin,
   listVoiceCatalog,
   loadDefaultVoiceCredential,
   loadVoiceCredential,
@@ -600,6 +601,7 @@ export interface RouterDeps {
     imageTag?: string;
     integrationsCatalogUrl?: string;
     mcpAllowPrivateEndpoint?: boolean;
+    transcribeProvider?: string;
   };
 }
 
@@ -6007,8 +6009,14 @@ export function createRouter(deps: RouterDeps) {
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),
       status: authed.voice.status.handler(async ({ context }) => {
-        const cred = await findDefaultVoiceCredential(deps.prisma, context.actor);
-        return toVoiceStatus(cred);
+        const [cred, pinned] = await Promise.all([
+          findDefaultVoiceCredential(deps.prisma, context.actor),
+          findTranscribePin(
+            { prisma: deps.prisma, transcribeProvider: deps.env.transcribeProvider },
+            context.actor,
+          ),
+        ]);
+        return toVoiceStatus(cred, pinned);
       }),
       credentials: authed.voice.credentials.handler(async ({ context }) => {
         const rows = await deps.prisma.userVoiceCredential.findMany({
@@ -6072,7 +6080,11 @@ export function createRouter(deps: RouterDeps) {
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
           ),
         );
-        return toVoiceStatus(cred);
+        const pinned = await findTranscribePin(
+          { prisma: deps.prisma, transcribeProvider: deps.env.transcribeProvider },
+          context.actor,
+        );
+        return toVoiceStatus(cred, pinned);
       }),
       setSpeechModel: authed.voice.setSpeechModel.handler(async ({ context, input }) =>
         updateVoiceSpeechModel(deps, context.actor, input),

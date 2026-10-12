@@ -5,12 +5,14 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   disconnectVoiceCredential,
+  findTranscribePin,
   fishSpeechModelValue,
   MAX_SPEAK_REQUEST_BYTES,
   MAX_TRANSCRIBE_REQUEST_BYTES,
   mountVoiceHttpRoutes,
   synthesizeVoice,
   toVoiceStatus,
+  transcribeVoice,
   updateVoiceSpeechModel,
   type VoiceDeps,
 } from "./voice.js";
@@ -479,5 +481,153 @@ describe("synthesizeVoice", () => {
     await synthesizeVoice(deps, actor, { text: "Hello" });
 
     expect(synthesize.mock.calls[0]?.[0]).toMatchObject({ model: undefined });
+  });
+});
+
+describe("transcription pin", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  type Connected = { provider: string; voiceId: string; isDefault: boolean };
+
+  /** One user's connected voice providers, keyed by provider; each key is `<provider>-key`. */
+  function pinDeps(connected: Connected[], transcribeProvider?: string) {
+    const preference = (row: Connected) => ({
+      isDefault: row.isDefault,
+      voiceId: row.voiceId,
+      speechModel: null,
+      credential: {
+        id: `cred-${row.provider}`,
+        userId: actor.userId,
+        provider: row.provider,
+        secretId: `secret-${row.provider}`,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+    });
+    const findFirst = vi.fn(
+      async ({ where }: { where: { isDefault?: boolean; credential?: { provider: string } } }) => {
+        const row = where.isDefault
+          ? connected.find((entry) => entry.isDefault)
+          : connected.find((entry) => entry.provider === where.credential?.provider);
+        return row ? preference(row) : null;
+      },
+    );
+    const prisma = {
+      spaceVoicePreference: { findFirst },
+      userVoiceCredential: { findFirst: vi.fn().mockResolvedValue(null) },
+      secret: {
+        findFirst: vi.fn(async ({ where }: { where: { id: string } }) => ({
+          id: where.id,
+          ciphertext: where.id.replace("secret-", ""),
+        })),
+      },
+    };
+    const deps = {
+      prisma,
+      secrets: { load: vi.fn(async (ciphertext: string) => `${ciphertext}-key`), put: vi.fn() },
+      transcribeProvider,
+    } as unknown as VoiceDeps;
+    return { deps, findFirst };
+  }
+
+  /** Fake adapters that record which provider handled each call. */
+  function fakeProviders() {
+    const used: Array<{ kind: string; op: string; apiKey: string }> = [];
+    vi.spyOn(adapters, "createVoiceProvider").mockImplementation((kind: string) => {
+      const speakOnly = kind === "sarvam";
+      return {
+        synthesize: vi.fn(async (request: { apiKey: string }) => {
+          used.push({ kind, op: "speak", apiKey: request.apiKey });
+          return { bytes: new Uint8Array([1]), mimeType: "audio/mpeg" as const };
+        }),
+        ...(speakOnly
+          ? {}
+          : {
+              transcribe: vi.fn(async (request: { apiKey: string }) => {
+                used.push({ kind, op: "transcribe", apiKey: request.apiKey });
+                return { text: "hello" };
+              }),
+            }),
+      } as never;
+    });
+    return used;
+  }
+
+  const audio = { audio: new Uint8Array([1, 2]), mimeType: "audio/m4a" };
+
+  it("speaks with the Sarvam default and transcribes with the pinned Deepgram key", async () => {
+    const used = fakeProviders();
+    const { deps } = pinDeps(
+      [
+        { provider: "sarvam", voiceId: "priya", isDefault: true },
+        { provider: "deepgram", voiceId: "flux-hannah-en", isDefault: false },
+      ],
+      "deepgram",
+    );
+
+    await synthesizeVoice(deps, actor, { text: "Hello" });
+    await expect(transcribeVoice(deps, actor, audio)).resolves.toEqual({ text: "hello" });
+
+    expect(used).toEqual([
+      { kind: "sarvam", op: "speak", apiKey: "sarvam-key" },
+      { kind: "deepgram", op: "transcribe", apiKey: "deepgram-key" },
+    ]);
+  });
+
+  it("keeps upstream behaviour when the pinned provider is not connected", async () => {
+    fakeProviders();
+    const { deps } = pinDeps(
+      [{ provider: "sarvam", voiceId: "priya", isDefault: true }],
+      "deepgram",
+    );
+
+    await expect(transcribeVoice(deps, actor, audio)).rejects.toThrow(
+      "This voice provider does not transcribe audio.",
+    );
+  });
+
+  it("transcribes with the default when the pin names a speak-only provider", async () => {
+    const used = fakeProviders();
+    const { deps, findFirst } = pinDeps(
+      [
+        { provider: "elevenlabs", voiceId: "abc", isDefault: true },
+        { provider: "sarvam", voiceId: "priya", isDefault: false },
+      ],
+      "sarvam",
+    );
+
+    await transcribeVoice(deps, actor, audio);
+
+    expect(used).toEqual([{ kind: "elevenlabs", op: "transcribe", apiKey: "elevenlabs-key" }]);
+    expect(findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ credential: { provider: "sarvam" } }),
+      }),
+    );
+  });
+
+  it("reports the pinned transcriber in the voice status", async () => {
+    const { deps } = pinDeps(
+      [
+        { provider: "sarvam", voiceId: "priya", isDefault: true },
+        { provider: "deepgram", voiceId: "", isDefault: false },
+      ],
+      "deepgram",
+    );
+    const pinned = await findTranscribePin(deps, actor);
+
+    expect(toVoiceStatus({ provider: "sarvam", voiceId: "priya" }, pinned)).toEqual({
+      configured: true,
+      ready: true,
+      transcribe: true,
+      provider: "sarvam",
+      voiceId: "priya",
+      transcribeProvider: "deepgram",
+    });
+    await expect(
+      findTranscribePin({ ...deps, transcribeProvider: undefined }, actor),
+    ).resolves.toBe(null);
   });
 });

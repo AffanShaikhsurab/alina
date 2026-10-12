@@ -1224,6 +1224,8 @@ export const VoiceStatusSchema = z.object({
   transcribe: z.boolean(),
   provider: z.string().nullable(),
   voiceId: z.string(),
+  /** Set when the deployment pins transcription to a provider the user has connected. */
+  transcribeProvider: z.string().nullable().optional(),
 });
 export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
 

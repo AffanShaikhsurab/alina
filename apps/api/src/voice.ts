@@ -30,6 +30,8 @@ import { withSerializableRetry } from "./serializable-retry.js";
 export interface VoiceDeps {
   prisma: PrismaClient;
   secrets: SecretStore;
+  /** `RAKAZO_TRANSCRIBE_PROVIDER`: transcribe with this provider when the user connected it. */
+  transcribeProvider?: string;
 }
 
 export { listVoiceCatalog };
@@ -52,15 +54,42 @@ export function catalogEntry(provider: string) {
   return voiceCatalogEntry(provider);
 }
 
-export function toVoiceStatus(cred: { provider: string; voiceId: string } | null): VoiceStatus {
+/** `pinned` is the connected transcription pin from `findTranscribePin`, if any. */
+export function toVoiceStatus(
+  cred: { provider: string; voiceId: string } | null,
+  pinned: { provider: string } | null = null,
+): VoiceStatus {
   const entry = cred ? catalogEntry(cred.provider) : undefined;
   return {
     configured: Boolean(cred),
     ready: Boolean(cred?.voiceId),
-    transcribe: Boolean(entry?.transcribe && cred),
+    transcribe: Boolean(pinned) || Boolean(entry?.transcribe && cred),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
+    ...(pinned ? { transcribeProvider: pinned.provider } : {}),
   };
+}
+
+/** The pinned provider, only when it can transcribe. */
+function transcribePin(deps: Pick<VoiceDeps, "transcribeProvider">): string | undefined {
+  const provider = deps.transcribeProvider;
+  return provider && catalogEntry(provider)?.transcribe ? provider : undefined;
+}
+
+/** The user's credential for the pinned transcription provider, or null when unpinned or not connected. */
+export async function findTranscribePin(
+  deps: Pick<VoiceDeps, "prisma" | "transcribeProvider">,
+  actor: Actor,
+) {
+  const pinned = transcribePin(deps);
+  return pinned ? findVoiceCredential(deps.prisma, actor, pinned) : null;
+}
+
+/** The pinned provider's key when the user connected it; otherwise the default (speech) credential. */
+export async function loadTranscribeCredential(deps: VoiceDeps, actor: Actor) {
+  const pinned = transcribePin(deps);
+  const loaded = pinned ? await loadVoiceCredential(deps, actor, pinned) : null;
+  return loaded ?? loadDefaultVoiceCredential(deps, actor);
 }
 
 export function toVoiceCredential(row: {
@@ -370,7 +399,7 @@ export async function transcribeVoice(
   actor: Actor,
   input: { audio: Uint8Array; mimeType: string; signal?: AbortSignal },
 ) {
-  const loaded = await loadDefaultVoiceCredential(deps, actor);
+  const loaded = await loadTranscribeCredential(deps, actor);
   if (!loaded) throw new NoVoiceConfigured("key");
   const provider = createVoiceProvider(loaded.cred.provider);
   if (!provider.transcribe) {

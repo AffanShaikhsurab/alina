@@ -576,6 +576,7 @@ export async function createApp(
       imageTag: env.imageTag,
       integrationsCatalogUrl: env.integrationsCatalogUrl,
       mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
+      transcribeProvider: env.transcribeProvider,
     },
   });
   const rpc = new RPCHandler(router, {
@@ -659,7 +660,8 @@ export async function createApp(
     if (matched) return c.newResponse(response.body, response);
     await next();
   });
-  mountVoiceHttpRoutes(app, { prisma, secrets }, async (c) => {
+  const voiceDeps = { prisma, secrets, transcribeProvider: env.transcribeProvider };
+  mountVoiceHttpRoutes(app, voiceDeps, async (c) => {
     const actor = await sessionActor(c.req.raw);
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
