@@ -297,7 +297,8 @@ export type SpaceNavigation = z.infer<typeof SpaceNavigationSchema>;
 export const BOT_NAME_MAX_LENGTH = 80;
 export const BOT_TITLE_MAX_LENGTH = 500;
 export const BOT_DESCRIPTION_MAX_LENGTH = 4000;
-export const BOT_INSTRUCTIONS_MAX_LENGTH = 20000;
+// LifeOS: Jarvis's rendered instructions (role prompt + operating notes) are ~39k characters.
+export const BOT_INSTRUCTIONS_MAX_LENGTH = 48000;
 
 export const CreateBotInput = z.object({
   name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH),
