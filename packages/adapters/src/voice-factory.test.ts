@@ -985,3 +985,57 @@ describe("ScriptedVoiceProvider", () => {
     ).resolves.toEqual({ text: SCRIPTED_TRANSCRIPT });
   });
 });
+
+describe("Deepgram and Sarvam request safety", () => {
+  it.each([
+    ["deepgram", "aura-2-thalia-en"],
+    ["sarvam", "priya"],
+  ])(
+    "%s speech follows the caller's abort and keeps the key out of errors",
+    async (kind, voiceId) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 500 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const controller = new AbortController();
+      const message = await createVoiceProvider(kind)
+        .synthesize(
+          { text: "Hello.", voiceId, apiKey: "secret-test-key", signal: controller.signal },
+          ctx,
+        )
+        .then(
+          () => "",
+          (caught: unknown) => String((caught as Error).message),
+        );
+      expect(message).toBe("speaking failed (500)");
+      expect(message).not.toContain("secret-test-key");
+      const signal = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)
+        ?.signal as AbortSignal;
+      expect(signal.aborted).toBe(false);
+      controller.abort();
+      expect(signal.aborted).toBe(true);
+    },
+  );
+
+  it("Deepgram transcription follows the caller's abort", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ results: { channels: [{ alternatives: [{ transcript: "hi" }] }] } }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await new DeepgramVoiceProvider().transcribe(
+      {
+        audio: new Uint8Array([1]),
+        mimeType: "audio/webm",
+        apiKey: "dg-test",
+        signal: controller.signal,
+      },
+      ctx,
+    );
+    const signal = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.signal as AbortSignal;
+    controller.abort();
+    expect(signal.aborted).toBe(true);
+  });
+});

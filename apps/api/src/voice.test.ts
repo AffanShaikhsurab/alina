@@ -630,4 +630,74 @@ describe("transcription pin", () => {
       findTranscribePin({ ...deps, transcribeProvider: undefined }, actor),
     ).resolves.toBe(null);
   });
+
+  it("speaks and transcribes with Deepgram when Deepgram is both the default and the pin", async () => {
+    const used = fakeProviders();
+    const { deps } = pinDeps(
+      [{ provider: "deepgram", voiceId: "aura-2-thalia-en", isDefault: true }],
+      "deepgram",
+    );
+
+    await synthesizeVoice(deps, actor, { text: "Hello" });
+    await transcribeVoice(deps, actor, audio);
+
+    expect(used).toEqual([
+      { kind: "deepgram", op: "speak", apiKey: "deepgram-key" },
+      { kind: "deepgram", op: "transcribe", apiKey: "deepgram-key" },
+    ]);
+  });
+
+  it("transcribes with the pin even when the speech default can transcribe", async () => {
+    const used = fakeProviders();
+    const { deps } = pinDeps(
+      [
+        { provider: "openai", voiceId: "alloy", isDefault: true },
+        { provider: "deepgram", voiceId: "", isDefault: false },
+      ],
+      "deepgram",
+    );
+
+    await synthesizeVoice(deps, actor, { text: "Hello" });
+    await transcribeVoice(deps, actor, audio);
+
+    expect(used).toEqual([
+      { kind: "openai", op: "speak", apiKey: "openai-key" },
+      { kind: "deepgram", op: "transcribe", apiKey: "deepgram-key" },
+    ]);
+  });
+
+  it("transcribes with the default when nothing is pinned", async () => {
+    const used = fakeProviders();
+    const { deps } = pinDeps([
+      { provider: "openai", voiceId: "alloy", isDefault: true },
+      { provider: "deepgram", voiceId: "", isDefault: false },
+    ]);
+
+    await transcribeVoice(deps, actor, audio);
+
+    expect(used).toEqual([{ kind: "openai", op: "transcribe", apiKey: "openai-key" }]);
+  });
+
+  it("routes the transcribe endpoint to the pinned Deepgram key", async () => {
+    const used = fakeProviders();
+    const { deps } = pinDeps(
+      [
+        { provider: "sarvam", voiceId: "priya", isDefault: true },
+        { provider: "deepgram", voiceId: "", isDefault: false },
+      ],
+      "deepgram",
+    );
+    const app = new Hono();
+    mountVoiceHttpRoutes(app, deps, async () => actor);
+
+    const response = await app.request("/api/voice/transcribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ audioBase64: "AAAA", mimeType: "audio/m4a" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ text: "hello" });
+    expect(used).toEqual([{ kind: "deepgram", op: "transcribe", apiKey: "deepgram-key" }]);
+  });
 });
