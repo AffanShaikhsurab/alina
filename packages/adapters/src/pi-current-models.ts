@@ -58,5 +58,12 @@ export function supplementPiModels(models: MutableModels): MutableModels {
     // Subscription transport keeps its own window; the account catalog may narrow it.
     contextWindow: sol?.contextWindow ?? 272000,
   });
+  // LifeOS: Kimi K3 on Bedrock is reachable only through the US cross-region inference profile
+  // (the bare model id fails on demand). Same Converse API and limits as the bundled Kimi K2.5.
+  add("amazon-bedrock", "moonshotai.kimi-k2.5", {
+    id: "us.moonshotai.kimi-k3",
+    name: "Kimi K3 (US inference profile)",
+    input: ["text"],
+  });
   return models;
 }
