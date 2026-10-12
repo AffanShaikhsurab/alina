@@ -1,3 +1,4 @@
+# Alina fork: builds ghcr.io/affanshaikhsurab/alina/* images.
 name: publish-server-image
 
 # Release tags publish the source-addressed image used by in-app updates plus the human-readable
