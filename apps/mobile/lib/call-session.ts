@@ -64,6 +64,8 @@ export type CallDeps = {
   /** Fallback when the device cannot: record a clip and send it to the voice provider. */
   record: (signal: AbortSignal) => Promise<CallClip | null>;
   transcribe: (clip: CallClip, signal: AbortSignal) => Promise<string>;
+  /** The provider the server pins for transcription; every turn then goes to it. */
+  pinnedTranscriber?: () => Promise<string | null>;
   /** Resolves with the run the message started, so only that run's reply is spoken. */
   send: (botId: string, text: string, clientNonce: string) => Promise<string | undefined>;
   /** Tells the server the caller hung up, so it files the call marker and the wrap-up run. */
@@ -103,6 +105,8 @@ const SPEECH_LEVEL_DB = -35;
 const SILENCE_HANG_MS = 1_200;
 const METER_POLL_MS = 200;
 const MAX_CLIP_MS = 30_000;
+/** The pin lookup runs under the opening cue; past this the call keeps on-device recognition. */
+const PIN_LOOKUP_TIMEOUT_MS = 5_000;
 
 let state: CallState | null = null;
 /** Shared by every message this call sends, so the thread can group one call's exchange. */
@@ -128,6 +132,8 @@ let turnSeq = 0;
 let canTranscribe = true;
 /** Whether this device does its own speech recognition; unknown until the first turn. */
 let onDevice: boolean | null = null;
+/** The server pins a transcriber: every turn is recorded for it, the device only hears barge-ins. */
+let serverTurns = false;
 /** A microphone session is running, so playback can leave it open instead of restarting it. */
 let micOpen = false;
 /** True from ringing until the start cue ends: nothing may open the microphone before the greeting. */
@@ -192,9 +198,11 @@ export function startCall(
   callRunId = null;
   canTranscribe = call.transcribe ?? true;
   onDevice = null;
+  serverTurns = false;
   micOpen = false;
   bargedIn = false;
   spokenMemory.clear();
+  const pinned = (deps.pinnedTranscriber?.() ?? Promise.resolve(null)).catch(() => null);
   state = {
     botId: call.botId,
     botName: call.botName,
@@ -208,17 +216,26 @@ export function startCall(
   };
   unwatch = deps.watch(call.botId, onReply, onCallEnded);
   emit();
-  void openCall(callId, call.greeting);
+  void openCall(callId, pinned, call.greeting);
   return callId;
 }
 
 /** The opening cue, then the greeting, then the caller's first turn. */
-async function openCall(openedCallId: string, greeting?: string): Promise<void> {
+async function openCall(
+  openedCallId: string,
+  pinned: Promise<string | null>,
+  greeting?: string,
+): Promise<void> {
   deps.waitSound("preload");
   opening = true;
   await deps.cue("start").catch(() => undefined);
+  const transcriber = await pinned;
   if (!state || callId !== openedCallId) return;
   opening = false;
+  if (transcriber) {
+    serverTurns = true;
+    canTranscribe = true;
+  }
   if (greeting) speakAndListen(greeting);
   else void listen();
 }
@@ -249,6 +266,7 @@ export function endCall(): void {
   callRunId = null;
   spokenMessageId = null;
   failures = 0;
+  serverTurns = false;
   micOpen = false;
   opening = false;
   bargedIn = false;
@@ -290,6 +308,13 @@ async function listen(): Promise<void> {
   }
   set({ phase: "listening", heard: "", caption: "" });
   if (state.muted) return;
+  if (serverTurns) {
+    // The device session that watched the reply for a barge-in must not take the turn.
+    turn?.abort();
+    turn = null;
+    micOpen = false;
+    clearInterim();
+  }
   await openMic();
 }
 
@@ -302,7 +327,8 @@ async function openMic(): Promise<void> {
   const { botId } = state;
   const mine = () => !controller.signal.aborted && state?.botId === botId;
   try {
-    if (onDevice !== false) {
+    // A pinned server transcriber hears every turn; the device only listens over a reply.
+    if (onDevice !== false && (!serverTurns || state.phase === "speaking")) {
       // The session stays open until it delivers a turn, so the microphone is still the
       // caller's while the reply plays and a barge-in can land.
       const started = await deps.dictate(
@@ -311,7 +337,9 @@ async function openMic(): Promise<void> {
             if (mine()) heardInterim(text);
           },
           onFinal: (text) => {
-            if (mine()) void handleTranscript(text);
+            if (!mine()) return;
+            if (serverTurns) heardOverReply(text);
+            else void handleTranscript(text);
           },
         },
         controller.signal,
@@ -324,6 +352,11 @@ async function openMic(): Promise<void> {
     }
     // Muting or hanging up while the device was deciding: no microphone after all.
     if (!mine() || !state || state.muted) {
+      micOpen = false;
+      return;
+    }
+    // The recorder would only record the reply; it waits for playback to end.
+    if (serverTurns && state.phase === "speaking") {
       micOpen = false;
       return;
     }
@@ -484,7 +517,24 @@ function heardInterim(text: string): void {
     bargedIn = true;
     deps.stopSpeaking();
     set({ phase: "listening", caption: "" });
+    // A pinned server transcriber takes the turn: hand the microphone to the recorder.
+    if (serverTurns) void listen();
   }, INTERIM_BARGE_IN_MS);
+}
+
+/** Pinned server transcriber: the device's words over a reply only decide whether to cut in. */
+function heardOverReply(text: string): void {
+  if (state?.phase !== "speaking") return;
+  // The session stopped itself to deliver this.
+  micOpen = false;
+  if (!isCallBargeIn(text.trim())) {
+    void openMic();
+    return;
+  }
+  bargedIn = true;
+  clearInterim();
+  deps.stopSpeaking();
+  void listen();
 }
 
 function clearInterim(): void {
@@ -551,14 +601,16 @@ function speakAndListen(text: string): void {
   }
   spokenMemory.remember(text);
   // Only the on-device path can hear the caller over the reply; the recorder would just
-  // record the speaker, so it stays shut until playback ends.
-  if (!onDevice) {
+  // record the speaker, so it stays shut until playback ends. With a pinned server
+  // transcriber the device still watches the reply for a barge-in when it can.
+  const watchReply = serverTurns ? onDevice !== false : onDevice;
+  if (!onDevice || serverTurns) {
     turn?.abort();
     turn = null;
     micOpen = false;
   }
   set({ phase: "speaking", heard: "" });
-  if (onDevice) void openMic();
+  if (watchReply) void openMic();
   void deps
     .speak(botId, text)
     .catch((error: unknown) => {
@@ -605,6 +657,7 @@ function productionDeps(): CallDeps {
     dictate: dictateTurn,
     record: recordClip,
     transcribe: transcribeClip,
+    pinnedTranscriber: loadPinnedTranscriber,
     send: sendHeard,
     endCall: closeCall,
     speak: speakReply,
@@ -692,6 +745,16 @@ async function transcribeClip(clip: CallClip, signal: AbortSignal): Promise<stri
   const body = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
   if (!res.ok) throw new Error(errorText(body.error ?? "", t("Could not transcribe that.")));
   return body.text ?? "";
+}
+
+/** Set when the server pins transcription to a provider the caller connected. */
+async function loadPinnedTranscriber(): Promise<string | null> {
+  const status = await rpc<{ transcribeProvider?: string | null }>(
+    "voice/status",
+    {},
+    { timeoutMs: PIN_LOOKUP_TIMEOUT_MS },
+  );
+  return status?.transcribeProvider || null;
 }
 
 async function sendHeard(

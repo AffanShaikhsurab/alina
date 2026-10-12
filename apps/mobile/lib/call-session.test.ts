@@ -39,8 +39,10 @@ function deferred<T>(): Deferred<T> {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function fakes(opts: { onDevice?: boolean } = {}) {
+function fakes(opts: { onDevice?: boolean; pinned?: string } = {}) {
   const recordings: Array<Deferred<CallClip | null>> = [];
+  // The fake clip carries the words, so transcription is the identity.
+  const transcribe = vi.fn(async (clip: CallClip, _signal: AbortSignal) => clip.base64);
   const signals: AbortSignal[] = [];
   const speeches: Array<Deferred<void>> = [];
   const send = vi.fn(
@@ -78,8 +80,8 @@ function fakes(opts: { onDevice?: boolean } = {}) {
       recordings.push(next);
       return next.promise;
     },
-    // The fake clip carries the words, so transcription is the identity.
-    transcribe: async (clip) => clip.base64,
+    transcribe,
+    pinnedTranscriber: async () => opts.pinned ?? null,
     send,
     endCall: closeCall,
     speak: (_botId, text) => {
@@ -105,6 +107,7 @@ function fakes(opts: { onDevice?: boolean } = {}) {
     signals,
     speeches,
     spoken,
+    transcribe,
     send,
     closeCall,
     unwatch,
@@ -787,6 +790,92 @@ describe("mobile call session", () => {
     expect(secondCallId).not.toBe(firstCallId);
     expect(getSnapshot()).toMatchObject({ botId: "bot-1", muted: false });
   });
+
+  it("sends every turn to a pinned server transcriber and never the device's words", async () => {
+    const fake = fakes({ onDevice: true, pinned: "deepgram" });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    expect(fake.recordings).toHaveLength(1);
+
+    fake.say("status please");
+    await flush();
+    expect(fake.transcribe).toHaveBeenCalledOnce();
+    expect(fake.send).toHaveBeenLastCalledWith(
+      "bot-1",
+      "status please",
+      expect.stringMatching(/^call:/),
+    );
+
+    fake.replyWith("message-1", "It is green.");
+    await flush();
+    // The device watches the reply: its echo is dropped and its words are never sent.
+    fake.hear("it is green");
+    await flush();
+    expect(fake.stopSpeaking).not.toHaveBeenCalled();
+    fake.hear("actually what about the tests");
+    await flush();
+    expect(fake.stopSpeaking).toHaveBeenCalledOnce();
+    expect(fake.send).toHaveBeenCalledOnce();
+    expect(getSnapshot()?.phase).toBe("listening");
+    expect(fake.recordings).toHaveLength(2);
+
+    fake.say("what about the tests");
+    await flush();
+    expect(fake.transcribe).toHaveBeenCalledTimes(2);
+    expect(fake.send).toHaveBeenLastCalledWith(
+      "bot-1",
+      "what about the tests",
+      expect.stringMatching(/^call:/),
+    );
+  });
+
+  it("records the next turn once a reply ends with a pinned server transcriber", async () => {
+    const fake = fakes({ onDevice: true, pinned: "deepgram" });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.say("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    await flush();
+    const watching = fake.signals.at(-1);
+
+    fake.speeches[0]?.resolve();
+    await flush();
+
+    expect(watching?.aborted).toBe(true);
+    expect(getSnapshot()?.phase).toBe("listening");
+    expect(fake.recordings).toHaveLength(2);
+  });
+
+  it("keeps on-device recognition when the server pins no transcriber", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.hear("status please");
+    await flush();
+
+    expect(fake.recordings).toHaveLength(0);
+    expect(fake.transcribe).not.toHaveBeenCalled();
+    expect(fake.send).toHaveBeenCalledWith(
+      "bot-1",
+      "status please",
+      expect.stringMatching(/^call:/),
+    );
+  });
+
+  it("keeps on-device recognition when the pin lookup fails", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall(
+      { botId: "bot-1", botName: "Ada", transcribe: false },
+      { ...fake.deps, pinnedTranscriber: () => Promise.reject(new Error("offline")) },
+    );
+    await flush();
+    fake.hear("status please");
+    await flush();
+
+    expect(fake.recordings).toHaveLength(0);
+    expect(fake.send).toHaveBeenCalledOnce();
+  });
 });
 
 describe("mobile call session on a timer", () => {
@@ -819,6 +908,38 @@ describe("mobile call session on a timer", () => {
     expect(fake.send).toHaveBeenLastCalledWith(
       "bot-1",
       "actually hang on",
+      expect.stringMatching(/^call:/),
+    );
+  });
+
+  it("still stops playback on a two-word interim with a pinned server transcriber", async () => {
+    const fake = fakes({ onDevice: true, pinned: "deepgram" });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await tick();
+    fake.say("status please");
+    await tick();
+    fake.replyWith("message-1", "It is green.");
+    await tick();
+
+    fake.interim("hang on");
+    await tick(INTERIM_BARGE_IN_MS - 1);
+    expect(fake.stopSpeaking).not.toHaveBeenCalled();
+    await tick(1);
+    expect(fake.stopSpeaking).toHaveBeenCalled();
+    expect(getSnapshot()?.phase).toBe("listening");
+    expect(fake.recordings).toHaveLength(2);
+
+    // The device session was handed over; its final never becomes the turn.
+    fake.hear("hang on");
+    await tick();
+    expect(fake.send).toHaveBeenCalledOnce();
+
+    fake.say("hang on what about the tests");
+    await tick();
+    expect(fake.transcribe).toHaveBeenCalledTimes(2);
+    expect(fake.send).toHaveBeenLastCalledWith(
+      "bot-1",
+      "hang on what about the tests",
       expect.stringMatching(/^call:/),
     );
   });
