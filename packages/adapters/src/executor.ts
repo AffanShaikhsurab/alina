@@ -7922,9 +7922,13 @@ export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to s
  * routines, so an exact NO_RESPONSE final is silent and mid-turn narration stays out of the thread.
  */
 const LIFEOS_SILENT_TRIGGERS = new Set(["webhook", "bot_message"]);
+/** A delivery that lands mid-run continues as a follow_up run; its exact NO_RESPONSE is silent too. */
+const LIFEOS_SILENT_SENTINEL_TRIGGERS = new Set([...LIFEOS_SILENT_TRIGGERS, "follow_up"]);
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
-  return trigger === "routine" || LIFEOS_SILENT_TRIGGERS.has(trigger) || isBackgroundRunTrigger(trigger);
+  return (
+    trigger === "routine" || LIFEOS_SILENT_SENTINEL_TRIGGERS.has(trigger) || isBackgroundRunTrigger(trigger)
+  );
 }
 
 export function runPromotesMidTurnNarration(trigger: string): boolean {

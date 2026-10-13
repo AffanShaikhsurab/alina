@@ -208,6 +208,11 @@ describe("LifeOS absorb runs (webhook deliveries, bot-to-bot results)", () => {
     expect(runAllowsSilentEmpty("user")).toBe(false);
     expect(runPromotesMidTurnNarration("user")).toBe(true);
   });
+
+  it("silences an exact NO_RESPONSE from a follow_up run but keeps its narration", () => {
+    expect(runAllowsSilentEmpty("follow_up")).toBe(true);
+    expect(runPromotesMidTurnNarration("follow_up")).toBe(true);
+  });
 });
 
 describe("background ticket runs", () => {
