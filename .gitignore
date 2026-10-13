@@ -46,3 +46,6 @@ apps/web/src/locales/**/*.mjs
 apps/web/src/locales/**/*.js
 apps/web/scripts/msgids.json
 playwright-report-www
+
+# Owner-only context (copied from the private LifeOS-Core repo). Never commit.
+/private/
