@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Alina banner</title>
+<!-- Source for docs/alina/banner.png. Render with headless Chrome: window 1280x760, device scale 2. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { width: 1280px; height: 760px; overflow: hidden; background: #f7f7f9;
+         font-family: "Segoe UI", "Inter", system-ui, -apple-system, Roboto, sans-serif; color: #0f172a; }
+  .hero { position: relative; width: 1280px; height: 760px; overflow: hidden;
+    background:
+      radial-gradient(700px 320px at 50% 0%, rgba(99,102,241,0.13), transparent 70%),
+      radial-gradient(500px 300px at 92% 70%, rgba(20,184,166,0.10), transparent 70%),
+      #f7f7f9; }
+  .dots { position: absolute; inset: 0; opacity: .55;
+    background-image: radial-gradient(rgba(15,23,42,0.08) 1px, transparent 1px); background-size: 22px 22px;
+    mask-image: linear-gradient(#000 0%, rgba(0,0,0,.4) 45%, transparent 70%); }
+
+  /* top bar */
+  .top { position: absolute; left: 36px; right: 36px; top: 26px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 11px; font-size: 25px; font-weight: 700; letter-spacing: -0.02em; }
+  .mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #6366f1, #14b8a6); box-shadow: 0 4px 14px rgba(99,102,241,.35); }
+  .links { display: flex; gap: 22px; font-size: 14px; color: #475569; }
+
+  /* headline */
+  .pill { position: absolute; top: 34px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: center;
+    padding: 7px 16px; border-radius: 999px; font-size: 13.5px; background: #eef0ff; border: 1px solid #c7cdfb; color: #4338ca; white-space: nowrap; }
+  .pill b { font-weight: 700; }
+  .pill i { width: 4px; height: 4px; border-radius: 50%; background: #a5b4fc; display: inline-block; }
+  h1 { position: absolute; top: 82px; left: 0; right: 0; margin: 0; text-align: center;
+    font-size: 64px; line-height: 1.05; font-weight: 750; letter-spacing: -0.045em; }
+  h1 span { background: linear-gradient(90deg, #4f46e5, #0d9488); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { position: absolute; top: 166px; left: 0; right: 0; margin: 0 auto; width: 760px; text-align: center;
+    font-size: 18px; line-height: 1.55; color: #64748b; }
+
+  /* app window */
+  .win { position: absolute; left: 110px; top: 250px; width: 1060px; height: 560px; border-radius: 18px;
+    background: #0e1016; border: 1px solid #1f2430; overflow: hidden; display: flex;
+    box-shadow: 0 30px 80px rgba(15,23,42,.30), 0 0 0 6px rgba(255,255,255,.6); color: #e5e7eb; }
+  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; background: linear-gradient(transparent, #f7f7f9); }
+
+  .side { width: 250px; background: #12141b; border-right: 1px solid #1f2430; padding: 14px 12px; }
+  .lights { display: flex; gap: 7px; margin: 2px 4px 14px; }
+  .lights span { width: 11px; height: 11px; border-radius: 50%; }
+  .search { background: #1a1d26; border: 1px solid #262a36; border-radius: 9px; padding: 8px 11px; font-size: 12.5px; color: #6b7280; margin-bottom: 10px; }
+  .group { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #6b7280; margin: 12px 6px 6px; }
+  .bot { display: flex; gap: 10px; align-items: center; padding: 8px 8px; border-radius: 10px; }
+  .bot.on { background: #1d2130; }
+  .av { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #0b1020; flex: none; }
+  .bt { flex: 1; min-width: 0; }
+  .bn { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; }
+  .bn small { font-weight: 400; color: #6b7280; font-size: 10.5px; }
+  .bs { font-size: 11.5px; color: #8b93a7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .chat { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #1f2430; }
+  .ch { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-bottom: 1px solid #1f2430; }
+  .ch .who { display: flex; gap: 10px; align-items: center; font-size: 14px; font-weight: 600; }
+  .ch .who small { display: block; font-size: 11px; color: #34d399; font-weight: 500; }
+  .call { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #c7d2fe; background: #1d2240; border: 1px solid #343b6b; padding: 6px 11px; border-radius: 999px; }
+  .msgs { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .me { align-self: flex-end; max-width: 330px; background: #e9ebff; color: #1e1b4b; border-radius: 16px 16px 4px 16px; padding: 10px 13px; font-size: 13px; line-height: 1.45; }
+  .wave { display: flex; gap: 2.5px; align-items: center; height: 18px; margin-bottom: 6px; }
+  .wave b { display: block; width: 3px; border-radius: 2px; background: #6366f1; }
+  .wave em { font-style: normal; font-size: 11px; color: #6366f1; margin-left: 8px; font-weight: 600; }
+  .al { align-self: flex-start; max-width: 390px; background: #191c26; border: 1px solid #262a36; border-radius: 16px 16px 16px 4px; padding: 11px 14px; font-size: 13px; line-height: 1.5; }
+  .row { display: flex; gap: 8px; align-items: baseline; margin-top: 5px; color: #cbd5e1; font-size: 12.5px; }
+  .ok { color: #34d399; font-weight: 700; }
+  .tagm { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #1e293b; color: #93c5fd; border: 1px solid #334155; }
+  .time { align-self: center; font-size: 11px; color: #6b7280; }
+  .chips { display: flex; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid #3b4263; color: #c7d2fe; }
+
+  .panel { width: 300px; padding: 14px 16px; background: #101219; }
+  .ph { font-size: 12px; color: #9ca3af; display: flex; justify-content: space-between; margin-bottom: 10px; }
+  .card { background: #161922; border: 1px solid #262a36; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .ct { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .cs { font-size: 11px; color: #8b93a7; margin-bottom: 10px; }
+  .stage { display: flex; align-items: center; gap: 9px; font-size: 12px; padding: 5px 0; color: #cbd5e1; }
+  .dot { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 800; flex: none; }
+  .d1 { background: #064e3b; color: #6ee7b7; }
+  .d2 { background: #312e81; color: #c7d2fe; box-shadow: 0 0 0 3px rgba(99,102,241,.25); }
+  .d3 { background: #1f2937; color: #6b7280; }
+  .stage small { margin-left: auto; color: #6b7280; font-size: 10.5px; }
+  .line { width: 2px; height: 8px; background: #2b3040; margin-left: 8px; }
+  .sched { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; color: #cbd5e1; }
+  .sched span:last-child { color: #6b7280; }
+  .voice { display: flex; gap: 8px; }
+  .vb { flex: 1; font-size: 11px; color: #9ca3af; background: #161922; border: 1px solid #262a36; border-radius: 10px; padding: 8px 10px; }
+  .vb b { display: block; color: #e5e7eb; font-size: 12.5px; margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="dots"></div>
+
+  <div class="top">
+    <div class="logo">
+      <div class="mark">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="#fff"><rect x="2" y="8" width="3" height="6" rx="1.5"/><rect x="7" y="4" width="3" height="14" rx="1.5"/><rect x="12" y="6" width="3" height="10" rx="1.5"/><rect x="17" y="9" width="3" height="4" rx="1.5"/></svg>
+      </div>
+      alina
+    </div>
+    <div class="links"><span>Voice</span><span>Bots</span><span>Departments</span><span>Self-host</span></div>
+  </div>
+
+  <div class="pill"><b>Apache-2.0</b><i></i>Voice-first fork of Rakazo<i></i>runs on your own server</div>
+  <h1>Say it once. <span>Your AI team handles it.</span></h1>
+  <p class="sub">Talk to one assistant by voice. It runs your inbox and calendar, gives real work to AI departments that check each other, and only interrupts you when a decision is yours.</p>
+
+  <div class="win">
+    <!-- sidebar -->
+    <div class="side">
+      <div class="lights"><span style="background:#ff5f57"></span><span style="background:#febc2e"></span><span style="background:#28c840"></span></div>
+      <div class="search">Search</div>
+      <div class="bot on"><div class="av" style="background:linear-gradient(135deg,#a5b4fc,#5eead4)">A</div><div class="bt"><div class="bn">Alina <small>now</small></div><div class="bs">brief sent · 2 decisions batched</div></div></div>
+      <div class="group">Personal bots</div>
+      <div class="bot"><div class="av" style="background:#5eead4">M</div><div class="bt"><div class="bn">Morning Mail <small>7:00</small></div><div class="bs">3 inboxes · 41 read · 4 drafts</div></div></div>
+      <div class="bot"><div class="av" style="background:#fcd34d">L</div><div class="bt"><div class="bn">Library <small>7:15</small></div><div class="bs">today's reread: ch. 4, with recall notes</div></div></div>
+      <div class="group">Departments</div>
+      <div class="bot"><div class="av" style="background:#a5b4fc">R</div><div class="bt"><div class="bn">Research <small>9:40</small></div><div class="bs">market scan · in head review</div></div></div>
+      <div class="bot"><div class="av" style="background:#f9a8d4">G</div><div class="bt"><div class="bn">Growth <small>Mon</small></div><div class="bs">2 launch drafts await your tap</div></div></div>
+      <div class="bot"><div class="av" style="background:#86efac">E</div><div class="bt"><div class="bn">Engineering <small>Sun</small></div><div class="bs">release passed checks</div></div></div>
+    </div>
+
+    <!-- chat -->
+    <div class="chat">
+      <div class="ch">
+        <div class="who"><div class="av" style="background:linear-gradient(135deg,#a5b4fc,#5eead4)">A</div><div>Alina<small>● listening</small></div></div>
+        <div class="call">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c7d2fe" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          Voice call
+        </div>
+      </div>
+      <div class="msgs">
+        <div class="me">
+          <div class="wave">
+            <b style="height:6px"></b><b style="height:12px"></b><b style="height:17px"></b><b style="height:9px"></b><b style="height:15px"></b><b style="height:7px"></b><b style="height:13px"></b><b style="height:18px"></b><b style="height:10px"></b><b style="height:5px"></b><b style="height:11px"></b><b style="height:14px"></b><b style="height:6px"></b>
+            <em>0:09</em>
+          </div>
+          Properly research the market for our app. And remind me about the dentist on Friday.
+        </div>
+        <div class="al">
+          Got it, two things:
+          <div class="row"><span class="ok">✓</span>Market research → <span class="tagm">Research dept</span> next update Thu 6 PM</div>
+          <div class="row"><span class="ok">✓</span>Dentist reminder → Fri 10:00</div>
+        </div>
+        <div class="time">Thursday 5:52 PM</div>
+        <div class="al">
+          The market brief passed review: 14 sources, 3 risks, 1 pricing gap. Want it now, or in tonight's digest?
+          <div class="chips"><span class="chip">Now</span><span class="chip">Tonight's digest</span></div>
+        </div>
+        <div class="me">Tonight's digest is fine.</div>
+      </div>
+    </div>
+
+    <!-- right panel -->
+    <div class="panel">
+      <div class="ph"><span>Team board</span><span>Market research</span></div>
+      <div class="card">
+        <div class="ct">Market research brief</div>
+        <div class="cs">Owner: Research dept · update due Thu 6 PM</div>
+        <div class="stage"><div class="dot d1">✓</div>Draft written<small>researcher</small></div>
+        <div class="line"></div>
+        <div class="stage"><div class="dot d1">✓</div>Contract check<small>script, no AI</small></div>
+        <div class="line"></div>
+        <div class="stage"><div class="dot d2">●</div>Head review<small>research lead</small></div>
+        <div class="line"></div>
+        <div class="stage"><div class="dot d3">·</div>Your tap<small>only if irreversible</small></div>
+      </div>
+      <div class="card">
+        <div class="ct" style="margin-bottom:6px">Today</div>
+        <div class="sched"><span>✓ Morning mail</span><span>7:00</span></div>
+        <div class="sched"><span>✓ Library pick</span><span>7:15</span></div>
+        <div class="sched"><span>✓ Daily brief</span><span>9:00</span></div>
+        <div class="sched"><span>Evening close</span><span>18:00</span></div>
+      </div>
+      <div class="voice">
+        <div class="vb">Listening<b>Deepgram</b></div>
+        <div class="vb">Speaking<b>Sarvam <span style="color:#6b7280;font-weight:400">or</span> Aura</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="fade"></div>
+</div>
+</body>
+</html>
