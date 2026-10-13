@@ -8,6 +8,7 @@ import {
   disambiguateInstalledToolNames,
   executeLazyCatalogControl,
   formatNameIndexText,
+  isLazyCatalogReadRoute,
   lazyCatalogTools,
   loadCatalogEntry,
   NAME_INDEX_MAX_NAMES,
@@ -450,5 +451,18 @@ describe("lazy tool catalog", () => {
         { group: "hubspot", names: ["get_deal", "list_contacts"] },
       ]),
     ).toBe("gmail:\n  list, read, send\nhubspot:\n  get_deal, list_contacts");
+  });
+});
+
+describe("isLazyCatalogReadRoute", () => {
+  it("treats only Rakazo's own catalog search and load as reads", () => {
+    const [search, load, execute] = lazyCatalogTools("connectors", "c1", "connector");
+    expect(isLazyCatalogReadRoute(search?.route)).toBe(true);
+    expect(isLazyCatalogReadRoute(load?.route)).toBe(true);
+    expect(isLazyCatalogReadRoute(execute?.route)).toBe(false);
+    expect(isLazyCatalogReadRoute(undefined)).toBe(false);
+    expect(
+      isLazyCatalogReadRoute({ connectorId: "c1", resourceId: "r1", toolName: load?.route?.toolName ?? "" }),
+    ).toBe(false);
   });
 });

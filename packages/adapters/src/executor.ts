@@ -252,6 +252,7 @@ import {
 import {
   assertConnectorToolArgs,
   CATALOG_EXECUTE,
+  isLazyCatalogReadRoute,
   uniquifyInstalledToolName,
 } from "./lazy-tool-catalog.js";
 import {
@@ -4253,12 +4254,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
           const declaredReadOnly = viaConnector
             ? (resolvedTool ?? connectorTools.get(name))?.readOnly
             : undefined;
-          const requiresUnattendedApproval = unattendedTriggerToolRequiresApproval(
-            run.trigger,
-            name,
-            viaConnector,
-            declaredReadOnly,
-          );
+          // LifeOS: a webhook run may search and load connector tool schemas unattended
+          // (no side effect); the tool it then executes is still gated by its own name.
+          const catalogRead =
+            viaConnector && !catalogRemapped && isLazyCatalogReadRoute(connectorTools.get(name)?.route);
+          const requiresUnattendedApproval =
+            !catalogRead &&
+            unattendedTriggerToolRequiresApproval(run.trigger, name, viaConnector, declaredReadOnly);
           const requiresApprovalByDefault =
             requiresUnattendedApproval ||
             toolRequiresApproval(name, viaConnector, declaredReadOnly);

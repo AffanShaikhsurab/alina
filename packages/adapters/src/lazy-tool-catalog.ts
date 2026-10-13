@@ -113,6 +113,18 @@ export function lazyCatalogTools(
   ];
 }
 
+/**
+ * Catalog search and load only describe tools; they never call one (execute is gated as the tool
+ * it resolves to). Rakazo builds these routes itself, so an installed connector cannot claim them.
+ */
+export function isLazyCatalogReadRoute(route: ConnectorRoute | undefined): boolean {
+  return Boolean(
+    route &&
+      !route.resourceId &&
+      (route.toolName === CATALOG_SEARCH || route.toolName === CATALOG_LOAD),
+  );
+}
+
 export function isLazyCatalogControlRoute(route: ConnectorRoute | undefined): boolean {
   return Boolean(
     route &&
