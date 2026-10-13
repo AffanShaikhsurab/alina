@@ -134,6 +134,16 @@ export function webhookTrustedMcpTool(toolName: string, trustedServers: readonly
   return trustedServers.includes(rest.slice(0, split));
 }
 
+/**
+ * LifeOS: built-in tools the deployment lets a webhook run use unattended
+ * (LIFEOS_WEBHOOK_TRUSTED_TOOLS, e.g. scratchpad notes). Tools that always need the owner stay gated.
+ */
+export function webhookTrustedBuiltinTool(toolName: string, trustedTools: readonly string[]): boolean {
+  if (toolRequiresExplicitApproval(toolName) || APPROVAL_REQUIRED_BUILTIN_TOOLS.has(toolName)) return false;
+  return trustedTools.includes(toolName);
+}
+
+/** Comma-separated names (MCP servers or tools); malformed entries are dropped. */
 export function parseTrustedMcpServers(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")

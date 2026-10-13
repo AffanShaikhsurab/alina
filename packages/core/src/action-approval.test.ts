@@ -13,6 +13,7 @@ import {
   toolRequiresApproval,
   toolRequiresExplicitApproval,
   unattendedTriggerToolRequiresApproval,
+  webhookTrustedBuiltinTool,
   webhookTrustedMcpTool,
 } from "./action-approval.js";
 
@@ -30,6 +31,13 @@ describe("webhookTrustedMcpTool", () => {
     expect(webhookTrustedMcpTool("mcp__lifeos__", trusted)).toBe(false);
     expect(webhookTrustedMcpTool("lifeos_append_event", trusted)).toBe(false);
     expect(webhookTrustedMcpTool("mcp__lifeos__append_event", [])).toBe(false);
+  });
+  it("trusts listed built-ins but never the owner-only ones", () => {
+    const tools = parseTrustedMcpServers("scratchpad_update,remember,secret_request,create_space");
+    expect(webhookTrustedBuiltinTool("scratchpad_update", tools)).toBe(true);
+    expect(webhookTrustedBuiltinTool("shell", tools)).toBe(false);
+    expect(webhookTrustedBuiltinTool("secret_request", tools)).toBe(false);
+    expect(webhookTrustedBuiltinTool("create_space", tools)).toBe(false);
   });
 });
 

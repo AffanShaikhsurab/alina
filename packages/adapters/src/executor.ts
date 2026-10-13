@@ -92,6 +92,7 @@ import {
   truncatedPlainText,
   unattendedTriggerToolRequiresApproval,
   userTurnMessageForRun,
+  webhookTrustedBuiltinTool,
   webhookTrustedMcpTool,
 } from "@rakazo/core";
 import {
@@ -4261,12 +4262,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
           const catalogRead =
             viaConnector && !catalogRemapped && isLazyCatalogReadRoute(connectorTools.get(name)?.route);
           // LifeOS: the deployment's own MCP servers run in webhook runs as they do in routines.
-          const webhookTrusted =
-            viaConnector &&
-            webhookTrustedMcpTool(
-              name,
-              parseTrustedMcpServers(process.env.LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS),
-            );
+          const webhookTrusted = viaConnector
+            ? webhookTrustedMcpTool(
+                name,
+                parseTrustedMcpServers(process.env.LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS),
+              )
+            : webhookTrustedBuiltinTool(
+                name,
+                parseTrustedMcpServers(process.env.LIFEOS_WEBHOOK_TRUSTED_TOOLS),
+              );
           const requiresUnattendedApproval =
             !catalogRead &&
             !webhookTrusted &&
