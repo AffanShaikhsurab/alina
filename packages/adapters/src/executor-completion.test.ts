@@ -192,6 +192,24 @@ describe("completionMarksUnread", () => {
   });
 });
 
+describe("LifeOS absorb runs (webhook deliveries, bot-to-bot results)", () => {
+  it("end silent on an exact NO_RESPONSE and keep narration out of the thread", () => {
+    for (const trigger of ["webhook", "bot_message"]) {
+      expect(runAllowsSilentEmpty(trigger)).toBe(true);
+      expect(runPromotesMidTurnNarration(trigger)).toBe(false);
+      const silent = stripNoResponseReply(NO_RESPONSE, [{ kind: "text", text: NO_RESPONSE }]);
+      const segments = completionMessageSegments(silent.blocks, {
+        allowSilentEmpty: runAllowsSilentEmpty(trigger),
+      });
+      const text = completionNotificationBody(silent.assembled, segments);
+      expect(text).toBe("");
+      expect(completionMarksUnread(trigger, text)).toBe(false);
+    }
+    expect(runAllowsSilentEmpty("user")).toBe(false);
+    expect(runPromotesMidTurnNarration("user")).toBe(true);
+  });
+});
+
 describe("background ticket runs", () => {
   it("stay silent, drop mid-turn narration, and never mark unread or notify", () => {
     expect(runAllowsSilentEmpty("tickets")).toBe(true);

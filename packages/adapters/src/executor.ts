@@ -7917,12 +7917,18 @@ export const LONG_WORK_PROGRESS_GUIDANCE =
 
 export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to stay silent when there is nothing to report, the entire final assistant reply must be exactly ${NO_RESPONSE} — no surrounding prose, no variants, no progress updates, no all-clear, and no meta note that you are staying silent. Do not call message_user unless you have something to report.`;
 
+/**
+ * LifeOS (06 §2.4, box test R7): webhook deliveries and bot-to-bot results are absorbed like
+ * routines, so an exact NO_RESPONSE final is silent and mid-turn narration stays out of the thread.
+ */
+const LIFEOS_SILENT_TRIGGERS = new Set(["webhook", "bot_message"]);
+
 export function runAllowsSilentEmpty(trigger: string): boolean {
-  return trigger === "routine" || isBackgroundRunTrigger(trigger);
+  return trigger === "routine" || LIFEOS_SILENT_TRIGGERS.has(trigger) || isBackgroundRunTrigger(trigger);
 }
 
 export function runPromotesMidTurnNarration(trigger: string): boolean {
-  return trigger !== "routine" && !isBackgroundRunTrigger(trigger);
+  return trigger !== "routine" && !LIFEOS_SILENT_TRIGGERS.has(trigger) && !isBackgroundRunTrigger(trigger);
 }
 
 export const TICKET_SILENT_REPLY_GUIDANCE =
@@ -8014,7 +8020,8 @@ export function completionMarksUnread(
 ): boolean {
   if (trigger === "bot_message") return userFacingPeerReply;
   if (isBackgroundRunTrigger(trigger)) return false;
-  return trigger !== "routine" || Boolean(text);
+  // LifeOS: a silent webhook delivery (NO_RESPONSE) leaves the thread read, like a silent routine.
+  return (trigger !== "routine" && trigger !== "webhook") || Boolean(text);
 }
 
 export function missingTurnImagesInstruction(
