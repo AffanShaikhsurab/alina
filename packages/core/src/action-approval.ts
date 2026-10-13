@@ -126,7 +126,10 @@ export function unattendedTriggerToolRequiresApproval(
  * server names) may run their tools (`mcp__<server>__<tool>`) in a webhook run without the owner,
  * as they would in a routine. Every other tool keeps the unattended rule above.
  */
-export function webhookTrustedMcpTool(toolName: string, trustedServers: readonly string[]): boolean {
+export function webhookTrustedMcpTool(
+  toolName: string,
+  trustedServers: readonly string[],
+): boolean {
   if (!toolName.startsWith("mcp__") || trustedServers.length === 0) return false;
   const rest = toolName.slice("mcp__".length);
   const split = rest.indexOf("__");
@@ -138,8 +141,12 @@ export function webhookTrustedMcpTool(toolName: string, trustedServers: readonly
  * LifeOS: built-in tools the deployment lets a webhook run use unattended
  * (LIFEOS_WEBHOOK_TRUSTED_TOOLS, e.g. scratchpad notes). Tools that always need the owner stay gated.
  */
-export function webhookTrustedBuiltinTool(toolName: string, trustedTools: readonly string[]): boolean {
-  if (toolRequiresExplicitApproval(toolName) || APPROVAL_REQUIRED_BUILTIN_TOOLS.has(toolName)) return false;
+export function webhookTrustedBuiltinTool(
+  toolName: string,
+  trustedTools: readonly string[],
+): boolean {
+  if (toolRequiresExplicitApproval(toolName) || APPROVAL_REQUIRED_BUILTIN_TOOLS.has(toolName))
+    return false;
   return trustedTools.includes(toolName);
 }
 

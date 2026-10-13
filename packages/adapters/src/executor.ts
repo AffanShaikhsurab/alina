@@ -4260,7 +4260,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           // LifeOS: a webhook run may search and load connector tool schemas unattended
           // (no side effect); the tool it then executes is still gated by its own name.
           const catalogRead =
-            viaConnector && !catalogRemapped && isLazyCatalogReadRoute(connectorTools.get(name)?.route);
+            viaConnector &&
+            !catalogRemapped &&
+            isLazyCatalogReadRoute(connectorTools.get(name)?.route);
           // LifeOS: the deployment's own MCP servers run in webhook runs as they do in routines.
           const webhookTrusted = viaConnector
             ? webhookTrustedMcpTool(
@@ -4274,7 +4276,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
           const requiresUnattendedApproval =
             !catalogRead &&
             !webhookTrusted &&
-            unattendedTriggerToolRequiresApproval(run.trigger, name, viaConnector, declaredReadOnly);
+            unattendedTriggerToolRequiresApproval(
+              run.trigger,
+              name,
+              viaConnector,
+              declaredReadOnly,
+            );
           const requiresApprovalByDefault =
             requiresUnattendedApproval ||
             toolRequiresApproval(name, viaConnector, declaredReadOnly);
@@ -7927,12 +7934,18 @@ const LIFEOS_SILENT_SENTINEL_TRIGGERS = new Set([...LIFEOS_SILENT_TRIGGERS, "fol
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
   return (
-    trigger === "routine" || LIFEOS_SILENT_SENTINEL_TRIGGERS.has(trigger) || isBackgroundRunTrigger(trigger)
+    trigger === "routine" ||
+    LIFEOS_SILENT_SENTINEL_TRIGGERS.has(trigger) ||
+    isBackgroundRunTrigger(trigger)
   );
 }
 
 export function runPromotesMidTurnNarration(trigger: string): boolean {
-  return trigger !== "routine" && !LIFEOS_SILENT_TRIGGERS.has(trigger) && !isBackgroundRunTrigger(trigger);
+  return (
+    trigger !== "routine" &&
+    !LIFEOS_SILENT_TRIGGERS.has(trigger) &&
+    !isBackgroundRunTrigger(trigger)
+  );
 }
 
 export const TICKET_SILENT_REPLY_GUIDANCE =
