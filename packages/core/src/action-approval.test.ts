@@ -6,13 +6,32 @@ import {
   connectorToolRequiresApproval,
   isApprovalAskBlock,
   isSecretAskBlock,
+  parseTrustedMcpServers,
   planActionGate,
   resolveActionApproval,
   resolveActionApprovalDetail,
   toolRequiresApproval,
   toolRequiresExplicitApproval,
   unattendedTriggerToolRequiresApproval,
+  webhookTrustedMcpTool,
 } from "./action-approval.js";
+
+describe("webhookTrustedMcpTool", () => {
+  const trusted = parseTrustedMcpServers(" lifeos, lifeos-files-cos ,paperclip,bad name,");
+  it("parses well-formed server names only", () => {
+    expect(trusted).toEqual(["lifeos", "lifeos-files-cos", "paperclip"]);
+    expect(parseTrustedMcpServers(undefined)).toEqual([]);
+  });
+  it("trusts exactly the listed MCP servers' tools", () => {
+    expect(webhookTrustedMcpTool("mcp__lifeos-files-cos__briefing_pack", trusted)).toBe(true);
+    expect(webhookTrustedMcpTool("mcp__paperclip__paperclipAddComment", trusted)).toBe(true);
+    expect(webhookTrustedMcpTool("mcp__google__gmail_draft", trusted)).toBe(false);
+    expect(webhookTrustedMcpTool("mcp__lifeos-files__read_file", trusted)).toBe(false);
+    expect(webhookTrustedMcpTool("mcp__lifeos__", trusted)).toBe(false);
+    expect(webhookTrustedMcpTool("lifeos_append_event", trusted)).toBe(false);
+    expect(webhookTrustedMcpTool("mcp__lifeos__append_event", [])).toBe(false);
+  });
+});
 
 describe("toolRequiresApproval", () => {
   it("requires approval for consequential builtins and destination writes", () => {

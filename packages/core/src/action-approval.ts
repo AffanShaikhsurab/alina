@@ -121,6 +121,26 @@ export function unattendedTriggerToolRequiresApproval(
     : !UNATTENDED_SAFE_BUILTIN_TOOLS.has(toolName);
 }
 
+/**
+ * LifeOS: the deployment's own MCP servers (LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS, comma-separated
+ * server names) may run their tools (`mcp__<server>__<tool>`) in a webhook run without the owner,
+ * as they would in a routine. Every other tool keeps the unattended rule above.
+ */
+export function webhookTrustedMcpTool(toolName: string, trustedServers: readonly string[]): boolean {
+  if (!toolName.startsWith("mcp__") || trustedServers.length === 0) return false;
+  const rest = toolName.slice("mcp__".length);
+  const split = rest.indexOf("__");
+  if (split <= 0 || split + 2 >= rest.length) return false;
+  return trustedServers.includes(rest.slice(0, split));
+}
+
+export function parseTrustedMcpServers(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name));
+}
+
 function categoryMatches(
   category: string,
   toolName: string,

@@ -80,6 +80,7 @@ import {
   messagingDmSurfaceNote,
   nextCronDateAcross,
   nextFence,
+  parseTrustedMcpServers,
   planActionGate,
   promptInvokesSkill,
   redactSecrets,
@@ -91,6 +92,7 @@ import {
   truncatedPlainText,
   unattendedTriggerToolRequiresApproval,
   userTurnMessageForRun,
+  webhookTrustedMcpTool,
 } from "@rakazo/core";
 import {
   approvalEffectKey,
@@ -4258,8 +4260,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
           // (no side effect); the tool it then executes is still gated by its own name.
           const catalogRead =
             viaConnector && !catalogRemapped && isLazyCatalogReadRoute(connectorTools.get(name)?.route);
+          // LifeOS: the deployment's own MCP servers run in webhook runs as they do in routines.
+          const webhookTrusted =
+            viaConnector &&
+            webhookTrustedMcpTool(
+              name,
+              parseTrustedMcpServers(process.env.LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS),
+            );
           const requiresUnattendedApproval =
             !catalogRead &&
+            !webhookTrusted &&
             unattendedTriggerToolRequiresApproval(run.trigger, name, viaConnector, declaredReadOnly);
           const requiresApprovalByDefault =
             requiresUnattendedApproval ||
