@@ -26,7 +26,9 @@ describe("Android mobile platform contract", () => {
     expect(thread).toContain("KeyboardAvoidingView");
     expect(thread).toContain('behavior="height"');
     expect(thread).toContain("useHeaderHeight");
-    expect(thread).toContain("keyboardVerticalOffset={0}");
+    expect(thread).toContain(
+      'keyboardVerticalOffset={Platform.OS === "android" ? nativeHeaderHeight : 0}',
+    );
     expect(thread).not.toContain("automaticOffset");
     expect(thread).not.toContain("KeyboardStickyView");
     expect(thread).toContain("useSafeAreaInsets");
@@ -273,29 +275,25 @@ describe("Android mobile platform contract", () => {
     );
   });
 
-  it("clears only the unchanged origin composer after delivery settles and preserves send errors", () => {
+  it("clears the unchanged composer only after preparing the scoped optimistic send", () => {
     const thread = readFileSync(resolve(mobileRoot, "app/thread.tsx"), "utf8");
     const send = thread.slice(
       thread.indexOf("async function send()"),
-      thread.indexOf("async function stop()"),
+      thread.indexOf("async function deliver"),
     );
-    const firstDelivery = send.indexOf("await deliver(attempt, () => {");
-    expect(firstDelivery).toBeGreaterThan(-1);
-    expect(send.slice(0, firstDelivery)).not.toContain("composerRef.current?.reset()");
-    const clear = send.slice(firstDelivery, send.indexOf("async function deliver"));
-    expect(clear).toMatch(
-      /if \(originThreadKey !== \(activeGroupId.current \?\? activeBotId.current\)\) return;\s*const current = composerRef.current\?\.snapshot\(\);\s*if \(!current\) return;\s*const settled = settleComposer/,
+    expect(send.indexOf("await prepareUnsentSends()")).toBeLessThan(
+      send.indexOf("feedback.sendAttempt("),
     );
-    expect(clear).toContain("settleComposer(submitted, current)");
-    expect(clear).toMatch(
-      /setPendingAttachments\(\(current\) =>\s*current.filter\(\(attachment\) => !submitted.attachmentIds.includes\(attachment.id\)\)/,
+    expect(send.indexOf("feedback.sendAttempt(")).toBeLessThan(
+      send.indexOf("composerRef.current?.reset()"),
     );
-    expect(clear).toMatch(
-      /if \(!settled.clearComposer\) return;\s*composerRef.current\?\.reset\(\)/,
+    expect(send.indexOf("composerRef.current?.reset()")).toBeLessThan(
+      send.indexOf("await deliver(attempt)"),
     );
-    expect(send).toMatch(/finally \{\s*onSettled\?\.\(\);/);
-    expect(send).toContain('attempt.error = errorText(err, t("Failed to send message"))');
-    expect(thread).toContain("onRetry={() => void deliver(attempt)}");
+    expect(send).toContain(
+      "JSON.stringify(submitted) !== JSON.stringify(composerRef.current?.snapshot())",
+    );
+    expect(thread).toContain("onRetry={() => void deliver(attempt, true)}");
   });
 
   it("offers Voice settings when speaking has no configured provider", () => {
@@ -322,8 +320,8 @@ describe("Android mobile platform contract", () => {
     const menu = readFileSync(resolve(mobileRoot, "components/bot-organize-modal.tsx"), "utf8");
     expect(menu).toContain("Silence notifications");
     expect(menu).toContain("Resume notifications");
-    expect(index).toContain("muted={!bot.notifyOnFinish}");
-    expect(thread).toContain("muted={!currentBot.notifyOnFinish}");
+    expect(index).toContain("muted={bot.notifyOnFinish === false}");
+    expect(thread).toContain("muted={currentBot.notifyOnFinish === false}");
     expect(avatar).toContain('accessibilityLabel={t("Notifications silenced")}');
     expect(avatar).toContain('android="notifications-off"');
     expect(thread.match(/muted=\{/g)).toHaveLength(1);

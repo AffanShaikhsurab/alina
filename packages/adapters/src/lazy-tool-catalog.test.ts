@@ -462,7 +462,11 @@ describe("isLazyCatalogReadRoute", () => {
     expect(isLazyCatalogReadRoute(execute?.route)).toBe(false);
     expect(isLazyCatalogReadRoute(undefined)).toBe(false);
     expect(
-      isLazyCatalogReadRoute({ connectorId: "c1", resourceId: "r1", toolName: load?.route?.toolName ?? "" }),
+      isLazyCatalogReadRoute({
+        connectorId: "c1",
+        resourceId: "r1",
+        toolName: load?.route?.toolName ?? "",
+      }),
     ).toBe(false);
   });
 });

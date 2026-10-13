@@ -1,249 +1,110 @@
-# Rakazo
+# Alina
 
-[![GitHub stars](https://img.shields.io/github/stars/elie222/rakazo?labelColor=black&style=for-the-badge&color=2563EB)](https://github.com/elie222/rakazo/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?labelColor=black&style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/RWwKa2Sn7h)
-[![Download on the App Store](https://img.shields.io/badge/App%20Store-Download%20for%20iPhone-black?labelColor=black&style=for-the-badge&logo=apple&logoColor=white)](https://apps.apple.com/app/rakazo/id6801531099)
-[![Download the Android APK](https://img.shields.io/badge/Android-Download%20APK-black?labelColor=black&style=for-the-badge&logo=android&logoColor=white)](https://github.com/elie222/rakazo/releases/download/android/rakazo.apk)
+![Alina: say it once, your AI team handles it](./docs/alina/banner.png)
 
-![Rakazo — AI teammates you actually own](./docs/readme-hero.png)
+**Alina is a voice-first AI chief of staff that runs on your own server.** You talk to one assistant. It handles your inbox, calendar and reminders, runs small personal bots for routine jobs, and hands real work to AI "departments" whose output is checked before it reaches you. Only Alina talks to you; everything else reports to her.
 
-Rakazo is an open source AI agent for persistent teammates, and a self-hosted AI assistant you
-can run on your own machine. It is available on the web, as an Electron desktop app, and on
-[iPhone](https://apps.apple.com/app/rakazo/id6801531099) and [Android](https://github.com/elie222/rakazo/releases/download/android/rakazo.apk). Bring your own model
-and computer provider, or run the complete stack locally.
+Alina is a fork of [Rakazo](https://github.com/elie222/rakazo) (Apache-2.0), the open-source, self-hosted alternative to Grok Bot. Everything Rakazo does still works here: persistent bots, routines, memory, computers with a browser and terminal, MCP tools, and the web, desktop and mobile apps. Alina adds voice providers, a way to run many bots behind one assistant, and the pieces needed to plug in a reviewed AI workforce. Where Alina is heading: [MISSION.md](./MISSION.md).
 
-It is an open source, self-hosted alternative to Grok Bot, Meta Muse, OpenAI Dots, Instinct,
-OpenClaw, Hermes Agent, and Hark Pro.
+> **Status:** early and opinionated. It runs one owner's assistant in production on a single ARM64 server. Expect rough edges; the upstream Rakazo docs remain the reference for anything not covered here.
 
-Rakazo is in beta. Learn more at [rakazo.com](https://rakazo.com).
+## What Alina adds to Rakazo
 
-## How Rakazo compares
+**Voice**
+- **Deepgram** voice provider: speech-to-text (Nova-3) and text-to-speech (Aura voices).
+- **Sarvam AI** voice provider: natural Indian English and Indian-language speech (Bulbul).
+- **Separate listening and speaking.** `RAKAZO_TRANSCRIBE_PROVIDER=deepgram` makes every transcription use Deepgram, while the voice you hear can be Sarvam or Deepgram.
+- **Server transcription in calls.** When transcription is pinned, the mobile app sends each call turn to the server instead of using on-device recognition. Barge-in still works.
 
-Once Rakazo is running, it is just chat, like Grok Bot: you set up a bot and manage it from that
-chat. Muse, Dots, Instinct, and Hark Pro are hosted assistants. OpenClaw
-and Hermes Agent are also open source agents you can run yourself. Their docs describe installers,
-config files, and a gateway. Hermes Desktop can reach a first chat without the CLI; a messaging
-gateway is a separate process.
+**One assistant, many bots**
+- **Silent background runs.** Webhook deliveries, bot-to-bot messages and follow-up runs that end with exactly `NO_RESPONSE` post nothing, so background bots never ping the owner.
+- **Trusted tools for unattended runs.** `LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS` and `LIFEOS_WEBHOOK_TRUSTED_TOOLS` list the MCP servers and built-in tools a webhook run may use without the owner. Looking up tool schemas is always allowed, since it has no side effect. Tools that always need approval stay gated.
+- **Longer bot instructions:** 48,000 characters, so a full operating manual fits in one bot.
 
-- [Grok Bot](https://rakazo.com/grok-bot-alternative/)
-- [Muse](https://rakazo.com/muse-alternative/)
-- [Dots](https://rakazo.com/dots-alternative/)
-- [Instinct](https://rakazo.com/instinct-alternative/), the personal assistant you text or call
-- [OpenClaw](https://rakazo.com/openclaw-alternative/)
-- [Hermes Agent](https://rakazo.com/hermes-alternative/), Nous Research's open source agent
-- [Hark Pro](https://rakazo.com/hark-alternative/), the personal agent at hark.com
-- [All comparisons](https://rakazo.com/alternatives/)
-- [Self-hosting guide](https://rakazo.com/self-hosted-ai-agent/)
+**Models**
+- **Kimi K3 on Amazon Bedrock** through the US inference profile `us.moonshotai.kimi-k3`, alongside Rakazo's keyless Bedrock support (`PI_DEFAULT_CREDENTIALS=host` with an instance role).
 
-## Features
+**Packaging**
+- **An image overlay** (`infra/lifeos/Dockerfile`) that adds the Python and Node runtimes the extra MCP tool servers need, with pinned versions. No secrets or scripts are baked in; they are mounted at runtime.
+- **Images built by GitHub Actions** for `linux/amd64` and `linux/arm64`: `ghcr.io/affanshaikhsurab/alina/app`, `.../app-lifeos`, `.../computer`, `.../updater`.
 
-- Persistent bots with their own conversations, memory, routines, and history
-- Voice mode: speak replies, dictate, and call a bot. Bring your own ElevenLabs, OpenAI, Cartesia, or Fish Audio key
-- Shared Team Computers and isolated Private computers
-- Browser, terminal, file, and graphical desktop access
-- Bots that can delegate to peer bots or short-lived subagents
-- Bring-your-own model credentials through Pi
-- App integrations through Composio or Pipedream Connect, plus user-installed Treg, remote MCP, and OpenAPI tool sources
-- Docker, E2B, Daytona, CreateOS, Box, and trusted local-computer support
+Every Alina change is opt-in: with the settings above left unset, Alina behaves like upstream Rakazo (apart from the higher instructions limit).
 
-## Demo
+## How it fits together
 
-https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
-
-## Stack
-
-- TypeScript
-- React 19, Vite, and Tailwind CSS
-- Electron and Expo
-- Hono and oRPC
-- PostgreSQL and Prisma
-- Better Auth
-- Graphile Worker
-- Pi
-- Docker, E2B, Daytona, CreateOS, and Box
-- Composio, Pipedream Connect, MCP, and OpenAPI integrations
-
-## Quick start (published images)
-
-You need Docker Engine, the Compose plugin, curl, and OpenSSL. No clone or Node install.
-
-```bash
-mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh
+```
+You (phone, desktop or web) ── voice / chat ──► Alina (the one assistant)
+                                                  │
+                    ┌─────────────────────────────┼──────────────────────────────┐
+                    ▼                             ▼                              ▼
+            Personal bots                  Quick answers                 AI departments
+   (mail summary, reading pick …)      (Alina, same turn)      (research, growth, engineering …)
+     report to Alina, never you                                  work is checked, then reviewed;
+                                                                 you approve only what can't be undone
 ```
 
-The installer downloads the Compose files, creates `.env` with random secrets, and starts Rakazo.
-It preserves an existing `.env` when rerun.
+The departments run outside Rakazo, in a task control plane such as [Paperclip](https://github.com/paperclipai/paperclip), connected through MCP and a webhook back to Alina. The deployment kit for that side is not in this repository yet.
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, or `box`
-with the matching API key.
+## Quick start
 
-Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
-[self-hosting guide](./docs/self-host.md#published-images-no-checkout).
-
-On restricted networks, override the installer download base (`RAKAZO_DOWNLOAD_BASE`), skip
-existing Compose files (`--local` / `RAKAZO_DOWNLOAD_SKIP_EXISTING`), or mirror the bootstrap
-script URL — see
-[Restricted networks / mirror downloads](./docs/self-host.md#restricted-networks--mirror-downloads).
-
-For an agent-assisted install, use [SETUP_PROMPT.md](./SETUP_PROMPT.md).
-
-## Run on a server
-
-Bots stay on when the backend runs on a server. Use the same installer on a VPS, then connect from
-the desktop app, the mobile app, or a browser.
+Everything in Rakazo's [self-hosting guide](./docs/self-host.md) applies. To run Alina's images instead of Rakazo's, set these in `.env` before starting:
 
 ```bash
+mkdir -p alina && cd alina &&
+curl -fsSLO https://raw.githubusercontent.com/AffanShaikhsurab/alina/lifeos/v0.2.0-voice/infra/compose/install-images.sh &&
 bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
+
+# then edit .env:
+RAKAZO_IMAGE=ghcr.io/affanshaikhsurab/alina/app          # or .../app-lifeos for the MCP runtimes
+RAKAZO_IMAGE_TAG=sha-<commit>                            # pin a build; see the repo's packages
+RAKAZO_COMPUTER_IMAGE=ghcr.io/affanshaikhsurab/alina/computer
+RAKAZO_COMPUTER_IMAGE_TAG=sha-<commit>
+RAKAZO_TRANSCRIBE_PROVIDER=deepgram                      # optional: always listen with Deepgram
+
 bash install-images.sh
 ```
 
-Put HTTPS in front of port 5173; [docs/self-host.md](./docs/self-host.md#public-single-vm-deployment)
-covers the Caddy setup and host hardening. In the desktop app choose **Existing instance** and enter
-the `https://` address.
+Open `http://127.0.0.1:5173`, create the owner account, connect a model, then add voice keys in **Settings → Voice** (Deepgram, Sarvam, or any upstream provider).
 
-## Local development (source checkout)
+For a public server, put HTTPS in front of the web port and **close sign-ups after creating the owner account** ([guide](./docs/self-host.md#public-single-vm-deployment)).
 
-You need Node.js 22.22.2 or newer in the 22.x line, Node.js 24.x, or Node.js 26+;
-pnpm 9; and Docker. Node.js 23.x and 25.x are not supported.
+### Voice settings
 
-```bash
-git clone https://github.com/elie222/rakazo.git
-cd rakazo
-cp .env.example .env
-```
+| Setting | Default | Meaning |
+|---|---|---|
+| `RAKAZO_TRANSCRIBE_PROVIDER` | unset | Provider every transcription uses once you connect it (e.g. `deepgram`). Speech keeps your default voice |
+| `DEEPGRAM_STT_MODEL` | `nova-3` | Deepgram speech-to-text model |
+| `DEEPGRAM_STT_LANGUAGE` | Deepgram's default | Deepgram language, e.g. `en-IN` |
+| `SARVAM_TTS_MODEL` | `bulbul:v3` | Sarvam text-to-speech model |
+| `SARVAM_TTS_LANGUAGE` | `en-IN` | Sarvam language code |
 
-Set `POSTGRES_PASSWORD` (for example `openssl rand -hex 16`), then put the same value in
-`DATABASE_URL`. Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
-independent long random values. Docker sandboxes also need a dedicated
-`SANDBOX_SUPERVISOR_TOKEN`. You can also set `OPENROUTER_API_KEY`, or connect a supported
-model provider during onboarding.
+### Unattended-run settings
 
-For host-side development with Docker Desktop, set `SANDBOX_CONTROL_VIA_LOOPBACK=true`
-in `.env`. The supervisor discovers Docker Desktop's user socket automatically;
-`DOCKER_HOST` or `DOCKER_SOCKET` can override it for another Docker runtime.
-
-Managed app catalogs are optional. Set `COMPOSIO_API_KEY` for Composio, or the
-`PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, and `PIPEDREAM_PROJECT_ID` trio for Pipedream
-Connect. Users can add an HTTPS MCP server, Treg endpoint, or OpenAPI JSON document from
-**Integrations** without enabling either managed catalog. Connector credentials are encrypted on the
-server and are never returned by the API.
-
-Treg is usage-metered. Self-hosters supply their own Treg token; operators embedding Treg in a
-hosted product should review [Treg's integration terms](https://treg.to/integrate.md), which require
-a written agreement for hosted resale.
-
-```bash
-docker compose --env-file .env \
-  -f infra/compose/docker-compose.yml \
-  -f infra/compose/docker-compose.postgres-host.yml \
-  up postgres -d
-pnpm install
-pnpm db:generate
-pnpm db:migrate
-pnpm sandbox:build
-pnpm dev
-```
-
-Postgres stays network-internal in the default Compose file (same as published images). The
-`postgres-host` overlay publishes loopback `127.0.0.1:5433` for host-side `pnpm` and DB tools.
-If that port is occupied, change `POSTGRES_HOST_PORT` and the port in `DATABASE_URL` in `.env`.
-Without the overlay, open a shell with
-`docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
-Use a URI-safe `POSTGRES_PASSWORD` (`openssl rand -hex 16`). An existing `pgdata` volume keeps the
-user, password, and database from first init, so keep those values in `.env`, or change them in
-place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or when the data is
-disposable); `docker compose down -v` deletes all Postgres state.
-
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
-your first bot.
-
-For deployment, provider selection, backups, and upgrades, see the
-[self-hosting guide](./docs/self-host.md).
-
-To use CreateOS, set `SANDBOX_PROVIDER=createos` and `CREATEOS_SANDBOX_API_KEY`.
-Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
-`CREATEOS_SANDBOX_ROOTFS` default to `https://api.sb.createos.sh`, `s-2vcpu-2gb`,
-and `desktop:1`.
-
-## Desktop and mobile
-
-The Electron and Expo apps are clients of the same Rakazo API used by the web app.
-
-With the development stack running, launch Electron with:
-
-```bash
-pnpm --filter @rakazo/desktop dev
-```
-
-On first run the desktop app asks whether to run Rakazo on this computer or connect to an existing
-server. **This computer** installs and starts the published images with Docker Compose (the same
-files as `infra/compose/install-images.sh`) under the app's data directory, so Docker Desktop,
-OrbStack, or Docker Engine must be installed; the app links to them when it is not. Installed
-builds pin the image tag to their own version; unpackaged builds pull `edge`. Developers running
-`pnpm dev` should pick **Existing instance** with `http://127.0.0.1:5173` instead. Public servers
-must use HTTPS; HTTP is accepted only for loopback and private LAN addresses (not link-local). The
-app verifies Rakazo's health endpoint before saving, and later launches go straight to that
-instance. The stack keeps running after the app quits; **Stop Local Stack** in the application
-menu turns it off.
-
-Use **Change Rakazo Server…** in the application menu to reconnect. Closing that window without
-saving returns to the previous instance. For development automation, set `RAKAZO_WEB_URL` to point
-the shell somewhere else without changing the saved instance, or `RAKAZO_FORCE_SETUP=1` to run
-setup again.
-
-Mobile build and release instructions live in [docs/mobile-release.md](./docs/mobile-release.md).
-
-## UI language
-
-The web (and Electron-hosted) UI supports English, Deutsch, 한국어, Türkçe, हिन्दी,
-Português (Brasil), 简体中文, Español, and Русский under **Settings → Language**. The Expo
-app ships English, 简体中文, Русский, and Deutsch catalogs; **Account → Language** offers
-English and 简体中文, and the other catalogs follow the device language or
-`EXPO_PUBLIC_DEFAULT_UI_LOCALE`. The marketing
-homepage (`apps/www`) is available in en/de/ko/zh via footer language links (`/`, `/de/`,
-`/ko/`, `/zh/`); other marketing pages stay English. The Russian marketing homepage and
-native Electron setup/menu remain separate follow-up work.
+| Setting | Meaning |
+|---|---|
+| `LIFEOS_WEBHOOK_TRUSTED_MCP_SERVERS` | Comma-separated MCP server names whose tools a webhook run may call without the owner |
+| `LIFEOS_WEBHOOK_TRUSTED_TOOLS` | Comma-separated built-in tools allowed in webhook runs (tools that always need approval stay gated) |
 
 ## Development
 
-```text
-apps/       web, api, worker, desktop, mobile, and public website
-packages/   domain, contracts, persistence, adapters, UI, and test tooling
-infra/      local services and computer images
-docs/       architecture, operations, and release guides
-```
-
-Common checks:
+Same toolchain as Rakazo: Node, pnpm 9 (via corepack), TypeScript, Vitest, Biome, Prisma, Turbo.
 
 ```bash
-pnpm lint
-pnpm check
-pnpm test
-pnpm test:integration
-pnpm test:e2e
+corepack pnpm@9.15.0 install --frozen-lockfile
+corepack pnpm@9.15.0 --filter @rakazo/db generate
+pnpm check        # type check (needs pnpm on PATH: corepack enable)
+pnpm lint         # biome
+pnpm test         # vitest
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow and test matrix.
+The Alina changes have their own tests, in `packages/adapters/src/voice-factory.test.ts`, `apps/api/src/voice.test.ts`, `apps/mobile/lib/call-session.test.ts`, `packages/adapters/src/executor-completion.test.ts`, `packages/adapters/src/lazy-tool-catalog.test.ts` and `packages/core/src/action-approval.test.ts`.
 
-## Documentation
+Full local-development, desktop and mobile instructions are in Rakazo's original README: [docs/upstream/RAKAZO-README.md](./docs/upstream/RAKAZO-README.md).
 
-- [Self-hosting](./docs/self-host.md)
-- [Self-host secrets](./docs/self-host-secrets.md)
-- [Computer runtime and isolation](./docs/computer-runtime.md)
-- [Desktop releases](./docs/desktop-release.md)
-- [Mobile releases](./docs/mobile-release.md)
-- [Performance testing](./docs/performance.md)
+## Staying in sync with Rakazo
 
-## Contributing
+The default branch `lifeos/v0.2.0-voice` tracks upstream `elie222/rakazo` `main`. Upstream is merged in regularly on a test branch. Changes are kept small and opt-in so merges stay clean. General improvements, like the voice providers, are good candidates to offer back upstream.
 
-Contributions are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull
-request. For security vulnerabilities, follow [SECURITY.md](./SECURITY.md) instead of filing a public
-issue.
+## License and credit
 
-Rakazo is licensed under the [Apache License 2.0](./LICENSE).
-
-Questions and ideas are welcome in the [Rakazo Discord community](https://discord.gg/RWwKa2Sn7h).
+Apache License 2.0, the same as upstream ([LICENSE](./LICENSE)). Alina is built on [Rakazo](https://github.com/elie222/rakazo) by Elie Steinbock and contributors. Files changed for Alina carry a "LifeOS" note where they differ from upstream. The banner's source is [docs/alina/banner.html](./docs/alina/banner.html).
