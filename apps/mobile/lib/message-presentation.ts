@@ -13,25 +13,55 @@ export function isCenteredAgentEvent(blocks: readonly MessageBlock[]): boolean {
   );
 }
 
-export type MessagePresentationSegment = {
-  kind: "content";
-  blocks: MessageBlock[];
-};
+export type MessagePresentationSegment =
+  | { kind: "content"; blocks: MessageBlock[] }
+  | { kind: "steps"; block: Extract<MessageBlock, { kind: "steps" }> };
+
+/** What a chat chose to draw inline; see lib/thread-details. Absent means the defaults. */
+type DetailVisibility = { showSubagents?: boolean; showToolSteps?: boolean };
 
 /** Blocks the thread draws as their own native card instead of inside the text bubble. */
 function isCardBlock(block: MessageBlock): boolean {
   return block.kind === "app_connect" || block.kind === "choice" || block.kind === "computer";
 }
 
+/**
+ * Text content in one bubble. With tool steps shown, each steps block becomes its own
+ * line where it happened, splitting the text around it.
+ */
 export function messagePresentationSegments(
   blocks: readonly MessageBlock[],
+  details?: DetailVisibility,
 ): MessagePresentationSegment[] {
-  const content = blocks.filter((block) => !isCardBlock(block) && !isToolActivityBlock(block));
-  return content.length > 0 ? [{ kind: "content", blocks: content }] : [];
+  if (!details?.showToolSteps) {
+    const content = blocks.filter((block) => !isCardBlock(block) && !isToolActivityBlock(block));
+    return content.length > 0 ? [{ kind: "content", blocks: content }] : [];
+  }
+  const segments: MessagePresentationSegment[] = [];
+  let content: MessageBlock[] = [];
+  for (const block of blocks) {
+    if (block.kind === "steps") {
+      if (content.length > 0) segments.push({ kind: "content", blocks: content });
+      content = [];
+      if (block.steps.length > 0) segments.push({ kind: "steps", block });
+    } else if (!isCardBlock(block) && !isToolActivityBlock(block)) {
+      content.push(block);
+    }
+  }
+  if (content.length > 0) segments.push({ kind: "content", blocks: content });
+  return segments;
 }
 
-export function hasVisibleMessagePresentation(blocks: readonly MessageBlock[]): boolean {
-  return blocks.some((block) => !isToolActivityBlock(block) && !isDismissedChoice(block));
+export function hasVisibleMessagePresentation(
+  blocks: readonly MessageBlock[],
+  details?: DetailVisibility,
+): boolean {
+  return blocks.some((block) => {
+    if (isDismissedChoice(block)) return false;
+    if (block.kind === "subagent") return details?.showSubagents !== false;
+    if (block.kind === "steps") return details?.showToolSteps === true && block.steps.length > 0;
+    return !isToolActivityBlock(block);
+  });
 }
 
 type ChoiceBlock = Extract<MessageBlock, { kind: "choice" }>;

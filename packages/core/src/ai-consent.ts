@@ -32,6 +32,9 @@ export function aiDataUsesForProcedure(procedure: string, input?: unknown): AiDa
       "threads/followUp",
       "threads/react",
       "threads/answer",
+      // Summarizing sends the conversation to the bot's model and may save it to memory.
+      "threads/compact",
+      "subagents/redo",
       "routines/create",
       "routines/update",
       "routines/testRun",

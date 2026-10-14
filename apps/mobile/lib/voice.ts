@@ -6,6 +6,7 @@ import { promptAiConsent } from "./ai-consent";
 import type { ApiRequestContext } from "./api";
 import { aiConsentCoalesceKey, captureApiRequestContext, rpc } from "./api";
 import { voiceForBot } from "./bot-voices";
+import { isCallAudioActive, PLAYBACK_AUDIO_MODE } from "./call-audio";
 import { loadDeviceVoiceEnabled } from "./device-voice";
 import { t } from "./i18n";
 import { errorText } from "./user-error";
@@ -217,11 +218,23 @@ async function speakPrepared(text: string, opts: SpeechOptions, epoch: number): 
       control,
     );
     let finished = false;
+    // The next sentence is synthesised while this one plays, so there is no round trip of
+    // silence at every sentence boundary. A prefetch that is never played is dropped.
+    const render = (utterance: string) => {
+      const audio = renderUtterance(utterance, opts, requestContext);
+      audio.catch(() => undefined);
+      return audio;
+    };
     try {
-      for (const utterance of prepared.utterances) {
+      const { utterances } = prepared;
+      let next: Promise<Uint8Array> | null = null;
+      for (let index = 0; index < utterances.length; index += 1) {
         if (session.isStopped || !isCurrentSpeech(epoch)) break;
-        const audio = await renderUtterance(utterance, opts, requestContext);
+        const audio = await (next ?? render(utterances[index] ?? ""));
+        next = null;
         if (session.isStopped || !isCurrentSpeech(epoch)) break;
+        const following = utterances[index + 1];
+        if (following !== undefined) next = render(following);
         await playMpeg(audio, session);
       }
       finished = !session.isStopped && isCurrentSpeech(epoch);
@@ -508,19 +521,24 @@ async function playWithHtmlAudio(
 async function playWithNativeAudio(bytes: Uint8Array, session?: HostedSession): Promise<void> {
   if (session?.isStopped) return;
   const { createAudioPlayer, setAudioModeAsync } = await import("expo-audio");
-  await setAudioModeAsync({
-    playsInSilentMode: true,
-    interruptionMode: "mixWithOthers",
-    shouldPlayInBackground: false,
-  });
+  // A call holds its own audio session: resetting it here took the microphone away and
+  // moved the reply to the loudspeaker. Outside a call, play the way it always has.
+  const inCall = isCallAudioActive();
+  if (!inCall) await setAudioModeAsync(PLAYBACK_AUDIO_MODE);
   const file = new File(Paths.cache, `rakazo-voice-${Date.now()}.mp3`);
   file.create({ overwrite: true });
   file.write(bytesToBase64(bytes), { encoding: "base64" });
-  const player = createAudioPlayer({ uri: file.uri });
+  // Each finished clip would otherwise deactivate the session between sentences.
+  const player = inCall
+    ? createAudioPlayer({ uri: file.uri }, { keepAudioSessionActive: true })
+    : createAudioPlayer({ uri: file.uri });
   try {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      /** Started playing, so a later stop that nobody asked for came from the system. */
+      let started = false;
+      let resumed = false;
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
@@ -545,6 +563,19 @@ async function playWithNativeAudio(bytes: Uint8Array, session?: HostedSession): 
         if (status.didJustFinish) {
           finish();
           return;
+        }
+        if (status.playing) {
+          started = true;
+          resumed = false;
+        } else if (inCall && started && !resumed && !status.isBuffering && !session?.isPaused) {
+          // Unplugging headphones or losing Bluetooth pauses every player. A call carries
+          // on through the earpiece instead of stalling until the watchdog fails it.
+          resumed = true;
+          try {
+            player.play();
+          } catch {
+            // Still interrupted; the system resumes the clip when the interruption ends.
+          }
         }
         if (status.playing && status.duration > 0 && !session?.isPaused) {
           clearTimeout(timer);

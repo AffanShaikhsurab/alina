@@ -21,6 +21,13 @@ import {
   rpc,
   subscribeThread,
 } from "./api";
+import {
+  beginCallAudio,
+  callRecognizerCategory,
+  endCallAudio,
+  reassertCallAudio,
+  setCallSpeaker,
+} from "./call-audio";
 import type { CallCue } from "./call-sounds";
 import {
   playCallCue,
@@ -29,6 +36,7 @@ import {
   startWaitSound,
   stopWaitSound,
 } from "./call-sounds";
+import { loadTranscriptOpen, saveTranscriptOpen } from "./call-transcript";
 import * as dictation from "./dictation";
 import { getActiveUiLocale, t } from "./i18n";
 import { errorText } from "./user-error";
@@ -43,9 +51,13 @@ export type CallState = {
   botColor: string;
   phase: CallPhase;
   muted: boolean;
+  /** Loudspeaker instead of the earpiece. Headsets and Bluetooth win either way. */
+  speaker: boolean;
   transcriptOpen: boolean;
   caption: string;
   heard: string;
+  /** The reply the bot is still writing, shown in the transcript before it is spoken. */
+  draft: string;
   exchanges: CallExchange[];
 };
 
@@ -55,6 +67,17 @@ export type CallClip = { base64: string; mimeType: string };
 export type DictationHandlers = {
   onInterim: (text: string) => void;
   onFinal: (text: string) => void;
+  /** The session ended without hearing anything; the microphone is closed again. */
+  onIdle?: () => void;
+  /** The session failed before hearing anything; the microphone is closed again. */
+  onError?: (code: string) => void;
+};
+
+/** The call's audio session: held from the first ring to the hang-up. */
+export type CallAudio = {
+  begin: () => Promise<void>;
+  speaker: (on: boolean) => Promise<void>;
+  end: () => Promise<void>;
 };
 
 /** Everything that touches the device or the server, so the loop stays testable. */
@@ -77,10 +100,14 @@ export type CallDeps = {
   cue: (cue: CallCue) => Promise<void>;
   /** The soft sound while the bot works on a turn: loaded at call start, freed at hang-up. */
   waitSound: (action: "preload" | "start" | "stop" | "release") => void;
+  /** One phone-call audio session for the whole call; absent where nothing needs routing. */
+  audio?: CallAudio;
   watch: (
     botId: string,
     onReply: (messageId: string, text: string, runId?: string) => void,
     onCallEnded: (ended: CallEnded) => void,
+    /** The reply as the bot writes it, before its run settles and it is spoken. */
+    onDraft?: (messageId: string, text: string, runId?: string) => void,
   ) => () => void;
 };
 
@@ -174,6 +201,8 @@ function set(patch: Partial<CallState>) {
   if (patch.phase && patch.phase !== "thinking" && state.phase === "thinking") {
     deps.waitSound("stop");
   }
+  // So does a reply still being written: it is spoken, or abandoned, once thinking ends.
+  if (patch.phase && patch.phase !== "thinking") patch = { draft: "", ...patch };
   state = { ...state, ...patch };
   emit();
 }
@@ -211,13 +240,22 @@ export function startCall(
     botColor: call.botColor ?? "",
     phase: "listening",
     muted: false,
+    speaker: false,
     transcriptOpen: false,
     caption: "",
     heard: "",
+    draft: "",
     exchanges: [],
   };
-  unwatch = deps.watch(call.botId, onReply, onCallEnded);
+  unwatch = deps.watch(call.botId, onReply, onCallEnded, onDraft);
   emit();
+  const startedCallId = callId;
+  // The transcript opens the way the caller left it on their last call.
+  void loadTranscriptOpen()
+    .then((open) => {
+      if (open && state && callId === startedCallId) set({ transcriptOpen: true });
+    })
+    .catch(() => undefined);
   void openCall(callId, pinned, call.greeting);
   return callId;
 }
@@ -230,6 +268,10 @@ async function openCall(
 ): Promise<void> {
   deps.waitSound("preload");
   opening = true;
+  // The call's audio session is in place before the first sound, so even the ring is on
+  // the earpiece and nothing reroutes mid-call.
+  await deps.audio?.begin().catch(() => undefined);
+  if (!state || callId !== openedCallId) return;
   await deps.cue("start").catch(() => undefined);
   const transcriber = await pinned;
   if (!state || callId !== openedCallId) return;
@@ -266,7 +308,10 @@ export function endCall(): void {
         .then(() => closeServerCall(botId, closingCallId))
         .catch(() => undefined);
   }
-  if (state) deps.waitSound("release");
+  if (state) {
+    deps.waitSound("release");
+    void deps.audio?.end().catch(() => undefined);
+  }
   turn?.abort();
   turn = null;
   unwatch?.();
@@ -310,7 +355,17 @@ export function toggleMute(): void {
 
 export function toggleTranscript(): void {
   if (!state) return;
-  set({ transcriptOpen: !state.transcriptOpen });
+  const transcriptOpen = !state.transcriptOpen;
+  set({ transcriptOpen });
+  void saveTranscriptOpen(transcriptOpen).catch(() => undefined);
+}
+
+/** Moves the call between the earpiece and the loudspeaker, without touching the turn. */
+export function toggleSpeaker(): void {
+  if (!state) return;
+  const speaker = !state.speaker;
+  set({ speaker });
+  void deps.audio?.speaker(speaker).catch(() => undefined);
 }
 
 async function listen(): Promise<void> {
@@ -354,6 +409,12 @@ async function openMic(): Promise<void> {
             if (!mine()) return;
             if (serverTurns) heardOverReply(text);
             else void handleTranscript(text);
+          },
+          onIdle: () => {
+            if (mine()) micIdle();
+          },
+          onError: () => {
+            if (mine()) micFailed();
           },
         },
         controller.signal,
@@ -438,6 +499,7 @@ async function handleTranscript(raw: string): Promise<void> {
   set({
     phase: "thinking",
     heard: text,
+    draft: "",
     exchanges: [...state.exchanges, { role: "user", text }],
   });
   // The waiting sound follows the closing cue, and only if the bot has not answered yet.
@@ -561,6 +623,20 @@ function clearInterim(): void {
   interimTimer = null;
 }
 
+/** The recognizer gave up on a quiet stretch: open a fresh session, or the call goes deaf. */
+function micIdle(): void {
+  micOpen = false;
+  if (!state || state.muted || opening) return;
+  if (state.phase === "listening" || state.phase === "speaking") void openMic();
+}
+
+/** The recognizer failed outright. Over a reply the reply plays out; otherwise retry the turn. */
+function micFailed(): void {
+  micOpen = false;
+  if (state?.phase !== "listening") return;
+  failTurn(new Error(t("Could not hear that.")));
+}
+
 function onReply(messageId: string, text: string, runId?: string): void {
   // Work the bot files after hanging up belongs in the thread, not in the caller's ear.
   if (!state || switching || botEndedCall || messageId === spokenMessageId) return;
@@ -568,6 +644,14 @@ function onReply(messageId: string, text: string, runId?: string): void {
   if (callRunId && runId && runId !== callRunId) return;
   spokenMessageId = messageId;
   speakAndListen(text);
+}
+
+/** The reply forming while the bot works, so the transcript is live before it is spoken. */
+function onDraft(messageId: string, text: string, runId?: string): void {
+  if (!state || switching || botEndedCall || messageId === spokenMessageId) return;
+  if (callRunId && runId && runId !== callRunId) return;
+  if (state.phase !== "thinking" || state.draft === text) return;
+  set({ draft: text });
 }
 
 /** The bot on the line says it is handing over, then this call hangs up and the other bot rings. */
@@ -688,6 +772,7 @@ function productionDeps(): CallDeps {
       else if (action === "preload") void preloadWaitSound().catch(() => undefined);
       else releaseWaitSound();
     },
+    audio: { begin: beginCallAudio, speaker: setCallSpeaker, end: endCallAudio },
     watch: watchReplies,
   };
 }
@@ -695,19 +780,27 @@ function productionDeps(): CallDeps {
 /** The device's own speech recognition, which works with a speak-only voice provider. */
 async function dictateTurn(handlers: DictationHandlers, signal: AbortSignal): Promise<boolean> {
   if (!(await dictation.available())) return false;
-  await dictation.listen({ ...handlers, signal, lang: getActiveUiLocale() });
+  await dictation.listen({
+    ...handlers,
+    signal,
+    lang: getActiveUiLocale(),
+    // Each recognizer start reads this, so a Speaker toggle mid-listen sticks; the
+    // recognizer's own default is the loudspeaker in `.measurement`.
+    iosCategory: callRecognizerCategory,
+  });
   return true;
 }
 
 /** Records one hands-free turn: wait for speech, stop once the speaker goes quiet. */
 async function recordClip(signal: AbortSignal): Promise<CallClip | null> {
-  const { AudioModule, RecordingPresets, setAudioModeAsync } = await import("expo-audio");
+  const { AudioModule, RecordingPresets } = await import("expo-audio");
   const permission = await AudioModule.requestRecordingPermissionsAsync();
   if (!permission.granted) throw new Error(t("Allow microphone access to call a bot."));
   let recorder: AudioRecorder | undefined;
   let heardSpeech = false;
   try {
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    // The call's audio session already allows recording; flipping it per turn rerouted
+    // the audio and took the microphone from the barge-in listener.
     recorder = new AudioModule.AudioRecorder({
       ...RecordingPresets.HIGH_QUALITY,
       isMeteringEnabled: true,
@@ -740,7 +833,8 @@ async function recordClip(signal: AbortSignal): Promise<CallClip | null> {
     return { base64, mimeType: "audio/m4a" };
   } finally {
     recorder?.release();
-    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    // expo-audio's recorder resets the iOS mode to `.default`; the reply plays in `.voiceChat`.
+    await reassertCallAudio();
   }
 }
 
@@ -800,6 +894,7 @@ function watchReplies(
   botId: string,
   onNewReply: (messageId: string, text: string, runId?: string) => void,
   onEnded: (ended: CallEnded) => void,
+  onReplyDraft?: (messageId: string, text: string, runId?: string) => void,
 ): () => void {
   const controller = new AbortController();
   const watchedCallId = callId;
@@ -843,7 +938,12 @@ function watchReplies(
             // spoken; another run still working says nothing about this one.
             const run = snapshot?.run;
             const fromAnotherRun = Boolean(message.runId && message.runId !== run?.id);
-            if (!fromAnotherRun && run && ACTIVE_RUN_STATUSES.some((s) => s === run.status)) return;
+            if (!fromAnotherRun && run && ACTIVE_RUN_STATUSES.some((s) => s === run.status)) {
+              // Not spoken yet, but the transcript can show it forming.
+              const draft = blockText(message).trim();
+              if (draft) onReplyDraft?.(message.id, draft, message.runId);
+              return;
+            }
             const text = blockText(message).trim();
             if (!text) return;
             lastSeen = message.id;

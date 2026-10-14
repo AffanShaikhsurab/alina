@@ -373,6 +373,9 @@ export function subagentBlockFromPayload(
     status: status === "completed" || status === "failed" ? status : "running",
     progress: payload.progress ? String(payload.progress) : undefined,
     result: payload.result ? String(payload.result) : undefined,
+    ...(payload.instructions ? { instructions: String(payload.instructions) } : {}),
+    ...(payload.modelProvider ? { modelProvider: String(payload.modelProvider) } : {}),
+    ...(payload.modelId ? { modelId: String(payload.modelId) } : {}),
   };
 }
 

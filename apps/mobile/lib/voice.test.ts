@@ -4,6 +4,8 @@ import * as Speech from "expo-speech";
 import { Platform } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureApiRequestContext, currentApiBase, rpc } from "./api";
+import type * as CallAudio from "./call-audio";
+import { isCallAudioActive } from "./call-audio";
 import {
   getVoicePlaybackState,
   MAX_VOICE_AUDIO_BYTES,
@@ -48,6 +50,10 @@ vi.mock("expo-speech", () => ({
   getAvailableVoicesAsync: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
+vi.mock("./call-audio", async (importOriginal) => ({
+  ...(await importOriginal<typeof CallAudio>()),
+  isCallAudioActive: vi.fn(() => false),
+}));
 vi.mock("./api", () => ({
   aiConsentCoalesceKey: vi.fn(() => "test-consent-context"),
   authHeaders: vi.fn(),
@@ -282,6 +288,22 @@ describe("hosted voice playback controls", () => {
 
     await expect(spoken).resolves.toBe(true);
     expect(getVoicePlaybackState()).toEqual({ status: "idle", canPause: false });
+  });
+
+  it("synthesises the next sentence while the current one plays", async () => {
+    const spoken = speakText("Read this", { botId: "bot-1" });
+    await waitFor(() => ControllableAudio.instances.length > 0);
+    const audio = ControllableAudio.instances[0]!;
+    await waitFor(() => audio.paused === false);
+    // Both sentences are requested before the first has finished playing.
+    await waitFor(() => vi.mocked(fetch).mock.calls.length === 2);
+    expect(ControllableAudio.instances).toHaveLength(1);
+
+    audio.onended?.();
+    await waitFor(() => ControllableAudio.instances.length > 1);
+    ControllableAudio.instances[1]!.onended?.();
+    await expect(spoken).resolves.toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("carries a pause across the gap between utterances", async () => {
@@ -617,6 +639,104 @@ describe("hosted voice playback controls", () => {
       stopVoicePlayback();
       await spoken?.catch(() => undefined);
       vi.useRealTimers();
+    }
+  });
+
+  it("plays a call's reply in the call's session and carries on after a route change", async () => {
+    vi.stubGlobal("Audio", undefined);
+    vi.mocked(isCallAudioActive).mockReturnValue(true);
+    vi.mocked(setAudioModeAsync).mockClear();
+    class NativePlayer {
+      static instances: NativePlayer[] = [];
+      play = vi.fn(() => {
+        this.playing = true;
+      });
+      playing = false;
+      private listeners = new Set<(status: Record<string, unknown>) => void>();
+
+      constructor() {
+        NativePlayer.instances.push(this);
+      }
+
+      pause() {
+        this.playing = false;
+      }
+
+      release() {}
+
+      addListener(_event: string, listener: (status: Record<string, unknown>) => void) {
+        this.listeners.add(listener);
+        return { remove: () => this.listeners.delete(listener) };
+      }
+
+      emit(status: Record<string, unknown>) {
+        for (const listener of [...this.listeners]) listener(status);
+      }
+    }
+    vi.mocked(createAudioPlayer).mockImplementation(
+      () => new NativePlayer() as unknown as ReturnType<typeof createAudioPlayer>,
+    );
+
+    let spoken: Promise<boolean> | undefined;
+    try {
+      spoken = speakText("Read this", { botId: "bot-1" });
+      await waitFor(() => NativePlayer.instances.length === 1);
+      const player = NativePlayer.instances[0]!;
+      await waitFor(() => player.playing);
+      expect(setAudioModeAsync).not.toHaveBeenCalled();
+      expect(createAudioPlayer).toHaveBeenLastCalledWith(
+        { uri: "file:///cache/rakazo-voice.mp3" },
+        { keepAudioSessionActive: true },
+      );
+
+      player.emit({ playing: true, duration: 2, isBuffering: false });
+      // Headphones unplugged: the system pauses the player.
+      player.playing = false;
+      player.emit({ playing: false, duration: 2, isBuffering: false });
+      expect(player.play).toHaveBeenCalledTimes(2);
+      expect(player.playing).toBe(true);
+      // A second stop before it plays again is left to the system.
+      player.emit({ playing: false, duration: 2, isBuffering: false });
+      expect(player.play).toHaveBeenCalledTimes(2);
+
+      player.emit({ playing: false, didJustFinish: true });
+      await waitFor(() => NativePlayer.instances.length === 2);
+    } finally {
+      stopVoicePlayback();
+      await spoken?.catch(() => undefined);
+      vi.mocked(isCallAudioActive).mockReturnValue(false);
+    }
+  });
+
+  it("does not restart a reply the caller paused, even in a call", async () => {
+    vi.stubGlobal("Audio", undefined);
+    vi.mocked(isCallAudioActive).mockReturnValue(true);
+    const play = vi.fn();
+    const listeners = new Set<(status: Record<string, unknown>) => void>();
+    vi.mocked(createAudioPlayer).mockImplementation(
+      () =>
+        ({
+          play,
+          pause: vi.fn(),
+          release: vi.fn(),
+          addListener: (_event: string, listener: (status: Record<string, unknown>) => void) => {
+            listeners.add(listener);
+            return { remove: () => listeners.delete(listener) };
+          },
+        }) as unknown as ReturnType<typeof createAudioPlayer>,
+    );
+    let spoken: Promise<boolean> | undefined;
+    try {
+      spoken = speakText("Read this", { botId: "bot-1" });
+      await waitFor(() => play.mock.calls.length === 1);
+      for (const listener of [...listeners]) listener({ playing: true, duration: 2 });
+      pauseVoicePlayback();
+      for (const listener of [...listeners]) listener({ playing: false, duration: 2 });
+      expect(play).toHaveBeenCalledOnce();
+    } finally {
+      stopVoicePlayback();
+      await spoken?.catch(() => undefined);
+      vi.mocked(isCallAudioActive).mockReturnValue(false);
     }
   });
 });

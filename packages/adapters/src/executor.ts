@@ -6977,6 +6977,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 ? redactSecrets(event.progress, runSecrets)
                 : undefined;
               const safeResult = event.result ? redactSecrets(event.result, runSecrets) : undefined;
+              const safeInput = subagentInputFields(event, runSecrets);
               await deps.events.append({
                 spaceId: run.spaceId,
                 threadId: thread.id,
@@ -6990,6 +6991,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   status: event.status,
                   progress: safeProgress,
                   result: safeResult,
+                  ...safeInput,
                 },
               });
               if (event.status === "completed" || event.status === "failed") {
@@ -7011,6 +7013,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       status: event.status,
                       progress: safeProgress,
                       result: safeResult,
+                      ...safeInput,
                     },
                   ],
                   subagentMarksUnread(
@@ -8090,6 +8093,18 @@ export function subagentMarksUnread(
     (trigger === "bot_message" && userFacingPeerReply) ||
     (trigger !== "routine" && trigger !== "bot_message")
   );
+}
+
+/** The run_subagent input beyond name and task, redacted, with absent fields left out. */
+export function subagentInputFields(
+  event: { instructions?: string; modelProvider?: string; modelId?: string },
+  secrets: string[],
+): { instructions?: string; modelProvider?: string; modelId?: string } {
+  return {
+    ...(event.instructions ? { instructions: redactSecrets(event.instructions, secrets) } : {}),
+    ...(event.modelProvider ? { modelProvider: event.modelProvider } : {}),
+    ...(event.modelId ? { modelId: event.modelId } : {}),
+  };
 }
 
 function computerRunRequeueData(

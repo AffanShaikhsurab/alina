@@ -570,6 +570,10 @@ export type AgentRuntimeEvent =
       status: "running" | "completed" | "failed";
       progress?: string;
       result?: string;
+      /** The rest of the run_subagent input, on the start and terminal events. */
+      instructions?: string;
+      modelProvider?: string;
+      modelId?: string;
     }
   | { type: "done"; text?: string };
 
@@ -625,7 +629,8 @@ export interface BackgroundJobPayloads {
   "computer.update": { updateId: string };
   "computer.control-expire": { computerId: string; leaseId: string };
   "skill.teaching-expire": { skillId: string };
-  "history.compact": { threadId: string };
+  /** `throughSeq` marks a user-requested compaction that drains up to that message. */
+  "history.compact": { threadId: string; throughSeq?: number };
   "messaging.deliver": { runId?: string };
   /** Reconcile durable remote-agent intent; scope is loaded from the database. */
   "cloud_agent.poll": { agentId: string };

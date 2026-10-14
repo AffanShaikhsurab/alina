@@ -234,6 +234,39 @@ describe("Pi agent thinking level", () => {
     expect(levels).toEqual(["off", "high"]);
   });
 
+  it("keeps the rest of the subagent input on its start and finish events", async () => {
+    fakeAgentState.subagentArgs = {
+      name: "helper",
+      task: "help",
+      instructions: " Be brief. ",
+      model_provider: "xai",
+      model_id: "grok-4.6",
+    };
+    const runtime = new PiAgentRuntime();
+    const subagentEvents: Array<Record<string, unknown>> = [];
+    for await (const event of runtime.run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: "r",
+        prompt: "hello",
+        instructions: "",
+        history: [],
+        tools: builtinAgentTools,
+        model: { provider: "test", id: "plain-model" },
+        executeTool: vi.fn(async () => ({ ok: true })),
+        resolveModel: async (provider, modelId) => ({ provider, id: modelId }),
+      },
+      { operationId: "1", traceId: "1", spaceId: "w", userId: "u" },
+    )) {
+      if (event.type === "subagent") subagentEvents.push(event);
+    }
+
+    const input = { instructions: "Be brief.", modelProvider: "xai", modelId: "grok-4.6" };
+    expect(subagentEvents[0]).toMatchObject({ status: "running", ...input });
+    expect(subagentEvents.at(-1)).toMatchObject({ status: "completed", ...input });
+  });
+
   it.each([
     { parentLimit: 2, childLimit: 1, expected: 1 },
     { parentLimit: 1, childLimit: 2, expected: 2 },

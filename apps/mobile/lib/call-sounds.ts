@@ -1,5 +1,6 @@
 import type { AudioPlayer } from "expo-audio";
 import * as SecureStore from "expo-secure-store";
+import { isCallAudioActive } from "./call-audio";
 import type { WaitTone, WaitUnit } from "./wait-pattern";
 import { nextWaitUnit, WAIT_PATTERNS } from "./wait-pattern";
 
@@ -42,6 +43,8 @@ const WAIT_ASSETS = {
 
 /** Bound playback when no completion event arrives. */
 const CUE_MAX_MS = 1600;
+/** A call's session must not drop each time one of its sounds ends. */
+const CALL_PLAYER_OPTIONS = { keepAudioSessionActive: true };
 const WAIT_FADE_MS = 150;
 const WAIT_FADE_STEPS = 6;
 
@@ -69,7 +72,10 @@ export async function playCallCue(cue: CallCue): Promise<void> {
   if (epoch !== waitCallEpoch) return;
   const { createAudioPlayer } = await import("expo-audio");
   if (epoch !== waitCallEpoch) return;
-  const player = createAudioPlayer(CUE_ASSETS[cue]);
+  // The settings preview plays outside a call and lets the session go as usual.
+  const player = isCallAudioActive()
+    ? createAudioPlayer(CUE_ASSETS[cue], CALL_PLAYER_OPTIONS)
+    : createAudioPlayer(CUE_ASSETS[cue]);
   let finish: () => void = () => undefined;
   cuePlayers.set(player, () => finish());
   try {
@@ -114,7 +120,7 @@ async function waitPlayer(unit: WaitUnit, epoch: number): Promise<AudioPlayer | 
   const key = `${unit.tone}-${unit.pattern}`;
   let player = waitPlayers.get(key);
   if (!player) {
-    player = createAudioPlayer(WAIT_ASSETS[unit.tone][unit.pattern - 1]);
+    player = createAudioPlayer(WAIT_ASSETS[unit.tone][unit.pattern - 1], CALL_PLAYER_OPTIONS);
     waitPlayers.set(key, player);
   }
   return player;

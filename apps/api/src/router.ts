@@ -267,7 +267,9 @@ import {
   readServerUpdateStatus,
   UpdaterProxyError,
 } from "./server-update.js";
+import { getSubagentDetail, redoSubagent } from "./subagents.js";
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
+import { requestThreadCompaction, threadContextStatus } from "./thread-context.js";
 import {
   isBackgroundRun,
   isPeerRun,
@@ -2477,6 +2479,20 @@ export function createRouter(deps: RouterDeps) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         await setThreadUnreadState(deps.prisma, context.actor, target, true);
         return { ok: true as const };
+      }),
+      context: authed.threads.context.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        const me = await meDto(deps, context.actor);
+        return threadContextStatus(deps, context.actor, target, {
+          provider: me.defaultProvider,
+          modelId: me.defaultModel,
+        });
+      }),
+      compact: authed.threads.compact.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        return requestThreadCompaction(deps, target);
       }),
     },
     computer: {
@@ -6031,6 +6047,24 @@ export function createRouter(deps: RouterDeps) {
       list: authed.runs.list.handler(async ({ context, input }) => ({
         runs: await listSpaceRuns(deps.prisma, context.actor, input.filter),
       })),
+    },
+    subagents: {
+      get: authed.subagents.get.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        return getSubagentDetail(deps.prisma, target, input);
+      }),
+      redo: authed.subagents.redo.handler(async ({ context, input }) => {
+        if ((await modelSetup(deps, context.actor)).needsModel) {
+          throw new ORPCError("BAD_REQUEST", { message: "Connect a model to start a run." });
+        }
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind === "bot") {
+          await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        }
+        return redoSubagent(deps, context.actor, target, input);
+      }),
     },
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),

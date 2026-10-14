@@ -27,11 +27,13 @@ import { NativeSymbol } from "../components/native-symbol";
 import { Chevron } from "../components/row-accessories";
 import type { MobileBot, MobileMe, MobileModel, MobileModelCredential } from "../lib/api";
 import { rpc } from "../lib/api";
+import { thinkingLevelLabel } from "../lib/bot-model";
 import { deviceVoices, setVoiceForBot, voiceForBot, voiceLabel } from "../lib/bot-voices";
 import { COMPUTER_LIFECYCLE_TIMEOUT_MS } from "../lib/computer";
 import { loadDeviceVoiceEnabled } from "../lib/device-voice";
 import { useI18n } from "../lib/i18n";
 import { native, useMobileTokens } from "../lib/native";
+import { setThreadDetail, useThreadDetails } from "../lib/thread-details";
 import { errorText } from "../lib/user-error";
 import { stopVoicePlayback } from "../lib/voice";
 
@@ -67,6 +69,7 @@ export default function BotSettingsScreen() {
   const voiceChoice = useRef(0);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const threadDetails = useThreadDetails(botId);
 
   useEffect(() => {
     if (!botId) return;
@@ -539,6 +542,34 @@ export default function BotSettingsScreen() {
                 {modelMetaError}
               </Text>
             ) : null}
+            {botId ? (
+              <>
+                <View style={[styles.row, { marginTop: 12 }]}>
+                  <Text style={[styles.rowLabel, { color: tokens.mutedForeground }]}>
+                    {t("Show subagents")}
+                  </Text>
+                  <NativeSwitch
+                    accessibilityLabel={t("Show subagents")}
+                    onValueChange={(showSubagents) =>
+                      void setThreadDetail(botId, { showSubagents })
+                    }
+                    value={threadDetails.showSubagents}
+                  />
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLabel, { color: tokens.mutedForeground }]}>
+                    {t("Show tool steps")}
+                  </Text>
+                  <NativeSwitch
+                    accessibilityLabel={t("Show tool steps")}
+                    onValueChange={(showToolSteps) =>
+                      void setThreadDetail(botId, { showToolSteps })
+                    }
+                    value={threadDetails.showToolSteps}
+                  />
+                </View>
+              </>
+            ) : null}
           </View>
         ) : null}
         {error ? <Text style={{ color: tokens.destructive, marginTop: 16 }}>{error}</Text> : null}
@@ -560,16 +591,6 @@ function catalogLabel(
 ) {
   if (!provider) return undefined;
   return catalog.find((entry) => entry.provider === provider && entry.id === modelId)?.label;
-}
-
-function thinkingLevelLabel(level: ThinkingLevel, t: (message: string) => string) {
-  if (level === "xhigh") return t("Extra high");
-  if (level === "low") return t("Low");
-  if (level === "medium") return t("Medium");
-  if (level === "high") return t("High");
-  if (level === "minimal") return t("Minimal");
-  if (level === "max") return t("Max");
-  return `${level.slice(0, 1).toUpperCase()}${level.slice(1)}`;
 }
 
 const styles = StyleSheet.create({

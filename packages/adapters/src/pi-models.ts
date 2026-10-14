@@ -1,6 +1,7 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ModelOAuthSignInMode, ThinkingLevel } from "@rakazo/contracts";
+import { MAX_MODEL_CONTEXT_WINDOW } from "@rakazo/contracts";
 import { supplementPiModels } from "./pi-current-models.js";
 import { LOCAL_PROVIDER_ID, registerLocalProvider } from "./pi-local-provider.js";
 import { SUBSCRIPTION_SIGN_IN_PROVIDERS } from "./pi-oauth.js";
@@ -28,6 +29,8 @@ export type PiCatalogEntry = {
   placeholder?: boolean;
   /** Provider models share one pinned HTTPS models-list base URL. */
   catalogProbe?: boolean;
+  /** Tokens the model accepts per call. */
+  contextWindow?: number;
 };
 
 const catalogProbeBaseUrls = new Map<string, string>();
@@ -134,6 +137,7 @@ function buildPiCatalog(): PiCatalogEntry[] {
         // endpoint. Keep each custom connection scoped to its entered model ID.
         ...(provider.id === OPENAI_COMPATIBLE_PROVIDER_ID ? { placeholder: true } : {}),
         ...(probeBaseUrl ? { catalogProbe: true } : {}),
+        ...catalogContextWindow(model.contextWindow, provider.id),
       });
     }
   }
@@ -160,6 +164,14 @@ function buildPiCatalog(): PiCatalogEntry[] {
   }
 
   return entries;
+}
+
+/** A custom connection's window comes from its own settings, never from compatibility metadata. */
+function catalogContextWindow(window: number, providerId: string): { contextWindow?: number } {
+  if (providerId === OPENAI_COMPATIBLE_PROVIDER_ID) return {};
+  return Number.isInteger(window) && window >= 1 && window <= MAX_MODEL_CONTEXT_WINDOW
+    ? { contextWindow: window }
+    : {};
 }
 
 /**
