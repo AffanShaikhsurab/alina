@@ -779,4 +779,12 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Nothing new to compact": "没有可压缩的新内容",
   "Could not compact. Try again.": "压缩失败，请重试。",
   "Could not save model": "无法保存模型",
+  "Now using {model}": "正在使用 {model}",
+  "Compacting…": "正在压缩…",
+  "Context compacted": "上下文已压缩",
+  "Minimise call": "最小化通话",
+  "Call settings": "通话设置",
+  "End call": "结束通话",
+  iPhone: "iPhone",
+  Phone: "电话",
 };

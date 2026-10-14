@@ -32,8 +32,10 @@ describe("Android mobile platform contract", () => {
     expect(thread).not.toContain("automaticOffset");
     expect(thread).not.toContain("KeyboardStickyView");
     expect(thread).toContain("useSafeAreaInsets");
-    expect(thread).toContain("useKeyboardState");
-    expect(thread).toContain("keyboardVisible ? 12 : Math.max(insets.bottom + 12, 24)");
+    // The footer's bottom gap follows the keyboard frame by frame instead of jumping.
+    expect(thread).toContain("useReanimatedKeyboardAnimation");
+    expect(thread).toContain("Math.max(insets.bottom + 12, 24)");
+    expect(thread).toContain("[composerRestPadding, 12]");
   });
 
   it("requests live-update promotion and exposes its Android settings", () => {

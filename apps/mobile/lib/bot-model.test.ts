@@ -1,11 +1,13 @@
 import type { ModelCatalogEntry, ModelCredential, ThreadContext } from "@rakazo/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   botModelChoices,
   botModelKey,
   compactionReached,
+  compactThread,
   effectiveModel,
   modelChangeInput,
+  modelSwitchInput,
   thinkingLevelsFor,
 } from "./bot-model";
 
@@ -99,6 +101,86 @@ describe("modelChangeInput", () => {
       modelId: null,
       thinkingLevel: null,
     });
+  });
+});
+
+describe("modelSwitchInput", () => {
+  it("keeps the thinking level only when the new model offers it", () => {
+    expect(modelSwitchInput("bot-1", "anthropic::claude-fixture", "high", ["low", "high"])).toEqual(
+      {
+        botId: "bot-1",
+        modelProvider: "anthropic",
+        modelId: "claude-fixture",
+        thinkingLevel: "high",
+      },
+    );
+    expect(
+      modelSwitchInput("bot-1", "anthropic::claude-small", "high", []).thinkingLevel,
+    ).toBeNull();
+    expect(modelSwitchInput("bot-1", "", null, ["low"]).thinkingLevel).toBeNull();
+  });
+});
+
+describe("compactThread", () => {
+  const context = (compactedThroughSeq: number | null): ThreadContext => ({
+    provider: null,
+    modelId: null,
+    contextWindow: null,
+    usedTokens: null,
+    measuredAt: null,
+    compactedAt: null,
+    compactedThroughSeq,
+    uncompactedMessages: 0,
+  });
+  const sleep = async () => {};
+
+  it("reports nothing to compact without polling", async () => {
+    const request = vi.fn(async () => ({ queued: false, throughSeq: null }));
+    await expect(
+      compactThread(request as never, "bot-1", { alive: () => true, sleep }),
+    ).resolves.toBe("nothing");
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("polls the context until the summary reaches the requested message", async () => {
+    const seen: ThreadContext[] = [];
+    const replies: unknown[] = [{ queued: true, throughSeq: 40 }, context(10), context(40)];
+    const request = vi.fn(async () => replies.shift());
+    await expect(
+      compactThread(request as never, "bot-1", {
+        alive: () => true,
+        sleep,
+        onContext: (next) => seen.push(next),
+      }),
+    ).resolves.toBe("done");
+    expect(request).toHaveBeenNthCalledWith(1, "threads/compact", { botId: "bot-1" });
+    expect(request).toHaveBeenNthCalledWith(2, "threads/context", { botId: "bot-1" });
+    expect(seen.map((next) => next.compactedThroughSeq)).toEqual([10, 40]);
+  });
+
+  it("gives up after the wait and passes request errors through", async () => {
+    let clock = 0;
+    const request = vi.fn(async (path: string) =>
+      path === "threads/compact" ? { queued: true, throughSeq: 5 } : context(1),
+    );
+    await expect(
+      compactThread(request as never, "bot-1", {
+        alive: () => true,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+        pollMs: 1_000,
+        waitMs: 3_000,
+      }),
+    ).resolves.toBe("timeout");
+
+    const unsupported = vi.fn(async () => {
+      throw new Error("Unknown procedure");
+    });
+    await expect(
+      compactThread(unsupported as never, "bot-1", { alive: () => true, sleep }),
+    ).rejects.toThrow("Unknown procedure");
   });
 });
 

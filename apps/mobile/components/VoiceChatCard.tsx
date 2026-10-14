@@ -3,45 +3,49 @@ import { speechFromBlocks, voiceChatDuration, voiceChatSummary } from "@rakazo/c
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { MobileMessage } from "../lib/api";
+import { voiceChatClock } from "../lib/call-screen";
 import { useI18n } from "../lib/i18n";
 import { native, useMobileTokens } from "../lib/native";
+import { MotionView, quietEntering } from "./motion";
 import { NativeSymbol } from "./native-symbol";
 
-function clock(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-/** One call's exchange, collapsed to a card; expanding it shows the transcript. */
+/** One call's exchange as a centred "Voice chat · 00:21" line; tapping it shows the transcript. */
 export function VoiceChatCard({ group }: { group: VoiceChatGroup<MobileMessage> }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
   const [open, setOpen] = useState(false);
   const summary = voiceChatSummary(group);
   return (
-    <View style={[styles.card, { backgroundColor: native.fill }]}>
+    // No layout transition here: this row lives in the inverted thread list, which sizes cells
+    // itself, so only the transcript block fades in.
+    <View style={styles.wrap}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={open ? t("Hide transcript") : t("Show transcript")}
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen((wasOpen) => !wasOpen)}
-        style={styles.header}
+        style={({ pressed }) => [styles.header, { opacity: pressed ? 0.6 : 1 }]}
       >
-        <NativeSymbol ios="waveform" android="pulse-outline" size={16} color={tokens.foreground} />
-        <Text style={[styles.title, { color: tokens.foreground }]}>{t("Voice chat")}</Text>
-        <Text style={[styles.duration, { color: tokens.mutedForeground }]}>
-          {clock(voiceChatDuration(group))}
+        <NativeSymbol
+          ios="waveform"
+          android="pulse-outline"
+          size={14}
+          color={tokens.mutedForeground}
+        />
+        <Text style={[styles.title, { color: tokens.mutedForeground }]}>
+          {t("Voice chat")}
+          {" · "}
+          <Text style={styles.duration}>{voiceChatClock(voiceChatDuration(group))}</Text>
         </Text>
-        <View style={styles.chevron}>
-          <NativeSymbol
-            ios={open ? "chevron.up" : "chevron.down"}
-            android={open ? "chevron-up" : "chevron-down"}
-            size={16}
-            color={tokens.mutedForeground}
-          />
-        </View>
+        <NativeSymbol
+          ios={open ? "chevron.up" : "chevron.down"}
+          android={open ? "chevron-up" : "chevron-down"}
+          size={12}
+          color={tokens.mutedForeground}
+        />
       </Pressable>
       {open ? (
-        <View style={styles.transcript}>
+        <MotionView entering={quietEntering} style={styles.transcript}>
           {group.messages.map((message) => {
             // The marker is the card's summary line, never a transcript turn.
             if (message === group.marker) return null;
@@ -63,7 +67,7 @@ export function VoiceChatCard({ group }: { group: VoiceChatGroup<MobileMessage> 
               </Text>
             );
           })}
-        </View>
+        </MotionView>
       ) : summary ? (
         <Text numberOfLines={1} style={[styles.summary, { color: tokens.mutedForeground }]}>
           {summary}
@@ -74,19 +78,33 @@ export function VoiceChatCard({ group }: { group: VoiceChatGroup<MobileMessage> 
 }
 
 const styles = StyleSheet.create({
-  card: {
+  wrap: { alignSelf: "stretch", alignItems: "center", paddingVertical: 4 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: 12,
+  },
+  title: { fontSize: 14, fontWeight: "500" },
+  duration: { fontVariant: ["tabular-nums"] },
+  summary: {
+    maxWidth: "80%",
+    fontSize: 13,
+    textAlign: "center",
+    writingDirection: "auto",
+  },
+  transcript: { alignSelf: "stretch", paddingTop: 6, gap: 6 },
+  user: {
+    alignSelf: "flex-end",
+    maxWidth: "88%",
+    fontSize: 14,
+    textAlign: "right",
+    writingDirection: "auto",
+  },
+  bot: {
     alignSelf: "flex-start",
     maxWidth: "88%",
-    borderRadius: 18,
-  },
-  header: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, height: 40 },
-  title: { fontSize: 15, fontWeight: "500" },
-  duration: { fontSize: 13, fontVariant: ["tabular-nums"] },
-  chevron: { marginStart: "auto", paddingStart: 8 },
-  summary: { paddingHorizontal: 12, paddingBottom: 10, fontSize: 14, writingDirection: "auto" },
-  transcript: { paddingHorizontal: 12, paddingBottom: 12, gap: 6 },
-  user: { alignSelf: "flex-end", fontSize: 14, textAlign: "right", writingDirection: "auto" },
-  bot: {
     fontSize: 14,
     borderRadius: 12,
     paddingHorizontal: 10,

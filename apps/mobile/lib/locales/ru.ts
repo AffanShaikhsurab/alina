@@ -804,4 +804,12 @@ export const RU_MESSAGES: Record<string, string> = {
   "Nothing new to compact": "Нечего сжимать",
   "Could not compact. Try again.": "Не удалось сжать. Попробуйте снова.",
   "Could not save model": "Не удалось сохранить модель",
+  "Now using {model}": "Теперь используется {model}",
+  "Compacting…": "Сжатие…",
+  "Context compacted": "Контекст сжат",
+  "Minimise call": "Свернуть звонок",
+  "Call settings": "Настройки звонка",
+  "End call": "Завершить звонок",
+  iPhone: "iPhone",
+  Phone: "Телефон",
 };

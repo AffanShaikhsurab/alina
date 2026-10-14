@@ -83,8 +83,11 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
-import { useReducedMotion } from "react-native-reanimated";
+import {
+  KeyboardAvoidingView,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
+import { interpolate, useAnimatedStyle, useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppConnectCard } from "../components/AppConnectCard";
 import { AskActions } from "../components/AskActions";
@@ -101,6 +104,7 @@ import type { MarkdownArtifactPreviewTarget } from "../components/markdown-artif
 import { MarkdownArtifactPreview } from "../components/markdown-artifact-preview";
 import { MessageCaption } from "../components/message-caption";
 import { MessageContextMenu } from "../components/message-context-menu";
+import { MotionView, messageEntering, quietEntering, quietExiting } from "../components/motion";
 import { NativeActionButton } from "../components/native-action-button";
 import { NativeSymbol } from "../components/native-symbol";
 import { ReplyDismissButton } from "../components/reply-dismiss-button";
@@ -160,6 +164,7 @@ import {
 } from "../lib/live-notifications";
 import { presentMessageActionSheet } from "../lib/message-action-sheet";
 import { buildMessageContextMenu, messageMenuReaction } from "../lib/message-context-menu";
+import { arrivingKeys } from "../lib/message-motion";
 import {
   applyLocalChoiceDismissals,
   hasVisibleMessagePresentation,
@@ -457,7 +462,12 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   const nativeHeaderHeight = useHeaderHeight();
   const headerHeight = iosAtLeast(26) ? nativeHeaderHeight : 0;
   const insets = useSafeAreaInsets();
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  // Follows the keyboard frame by frame, so the composer's bottom gap shrinks with it.
+  const keyboard = useReanimatedKeyboardAnimation();
+  const composerRestPadding = Math.max(insets.bottom + 12, 24);
+  const composerPadding = useAnimatedStyle(() => ({
+    paddingBottom: interpolate(keyboard.progress.value, [0, 1], [composerRestPadding, 12]),
+  }));
   const {
     botId,
     groupId,
@@ -561,6 +571,8 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   }, [streamResponses]);
   const activeThreadId = useRef<string | undefined>(undefined);
   const [agentSkills, setAgentSkills] = useState<AgentSkillCatalogEntry[]>([]);
+  /** Stays false when the catalog fails to load, so a typed skill name is never held back. */
+  const [agentSkillsLoaded, setAgentSkillsLoaded] = useState(false);
   const [mentionBots, setMentionBots] = useState<MobileBot[]>([]);
   // The call outlives renders, so its switch check reads the newest bot list from here.
   const mentionBotsRef = useRef<MobileBot[]>([]);
@@ -715,7 +727,10 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
 
   useEffect(() => {
     void rpc<AgentSkillCatalogEntry[]>("agentSkills/list")
-      .then(setAgentSkills)
+      .then((skills) => {
+        setAgentSkills(skills);
+        setAgentSkillsLoaded(true);
+      })
       .catch(() => setAgentSkills([]));
   }, []);
 
@@ -1545,6 +1560,10 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
     setError(null);
   }, [threadKey]);
 
+  function openModelSheet() {
+    if (botId) router.push({ pathname: "/bot-model", params: { botId } });
+  }
+
   function runSlashAction(action: SlashActionId) {
     if (action === "chat-settings") {
       if (inGroup && groupId) {
@@ -1916,6 +1935,19 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   );
   // Group calls in reading order, then reverse for the inverted list.
   const liveItems = useMemo(() => groupVoiceChats(visibleMessages).reverse(), [visibleMessages]);
+  // Only rows that just arrived at the bottom animate in; first paint and older pages stay still.
+  const previousItemKeys = useRef<{ thread: string | undefined; keys: string[] } | null>(null);
+  const liveItemKeys = useMemo(() => liveItems.map(threadItemKey).reverse(), [liveItems]);
+  // Read the committed keys during render; only a committed render records them, so a discarded
+  // or double-invoked render cannot swallow an arrival.
+  const arriving = useMemo(() => {
+    const last = previousItemKeys.current;
+    const previous = last && last.thread === threadKey ? last.keys : null;
+    return new Set(arrivingKeys(previous, liveItemKeys));
+  }, [liveItemKeys, threadKey]);
+  useLayoutEffect(() => {
+    previousItemKeys.current = { thread: threadKey, keys: liveItemKeys };
+  }, [liveItemKeys, threadKey]);
   const messagesById = useMemo(
     () => new Map((snap?.messages ?? []).map((message) => [message.id, message])),
     [snap?.messages],
@@ -2161,18 +2193,22 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
     ],
   );
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<ThreadItem<MobileMessage>>) =>
-      item.kind === "voiceChat" ? (
-        <View style={messageListStyles.row}>
-          {item.messages[0] && separatorIds.has(item.messages[0].id) ? (
-            <TimeSeparator createdAt={item.messages[0].createdAt} />
-          ) : null}
-          <VoiceChatCard group={item} />
-        </View>
-      ) : (
-        renderMessageRow(item.message)
-      ),
-    [renderMessageRow, separatorIds],
+    ({ item }: ListRenderItemInfo<ThreadItem<MobileMessage>>) => (
+      // Always the same wrapper, so a row that stops arriving is never remounted.
+      <MotionView entering={arriving.has(threadItemKey(item)) ? messageEntering : undefined}>
+        {item.kind === "voiceChat" ? (
+          <View style={messageListStyles.row}>
+            {item.messages[0] && separatorIds.has(item.messages[0].id) ? (
+              <TimeSeparator createdAt={item.messages[0].createdAt} />
+            ) : null}
+            <VoiceChatCard group={item} />
+          </View>
+        ) : (
+          renderMessageRow(item.message)
+        )}
+      </MotionView>
+    ),
+    [renderMessageRow, separatorIds, arriving],
   );
   const listContentStyle = useMemo(
     () => ({
@@ -2385,7 +2421,11 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
             ListHeaderComponent={
               <>
                 {failedSendBubbles}
-                {workingFooter}
+                {workingFooter ? (
+                  <MotionView entering={quietEntering} exiting={quietExiting}>
+                    {workingFooter}
+                  </MotionView>
+                ) : null}
               </>
             }
             renderItem={renderItem}
@@ -2451,13 +2491,7 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
         <View pointerEvents="none" style={[styles.headerFade, { height: headerHeight + 24 }]} />
       ) : null}
       {/* Shrinks (the suggestion lists scroll) so the input and Send stay above the keyboard. */}
-      <View
-        style={{
-          display: readOnly ? "none" : "flex",
-          flexShrink: 1,
-          paddingBottom: keyboardVisible ? 12 : Math.max(insets.bottom + 12, 24),
-        }}
-      >
+      <MotionView style={[{ display: readOnly ? "none" : "flex", flexShrink: 1 }, composerPadding]}>
         {/* Fades messages out above the composer, like the header fade. */}
         <View pointerEvents="none" style={styles.composerFade} />
         {replyTarget ? (
@@ -2569,6 +2603,7 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
           key={threadKey}
           ref={composerRef}
           agentSkills={agentSkills}
+          agentSkillsLoaded={agentSkillsLoaded}
           composerMentionTargets={composerMentionTargets}
           composerPrompt={composerPrompt}
           replyTargetId={replyTarget?.id}
@@ -2585,8 +2620,9 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
           stop={stop}
           startVoiceCall={startVoiceCall}
           onSlashAction={runSlashAction}
+          openModelSheet={openModelSheet}
         />
-      </View>
+      </MotionView>
       <Modal
         visible={botActionsOpen}
         transparent
