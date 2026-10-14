@@ -110,6 +110,7 @@ import { trailingHeaderOptions } from "../components/sheet-header";
 import type { ThreadComposerHandle } from "../components/thread-composer";
 import { ThreadComposer } from "../components/thread-composer";
 import { TimeSeparator } from "../components/time-separator";
+import { ToolStepsLine } from "../components/tool-steps";
 import { VoiceChatCard } from "../components/VoiceChatCard";
 import { WorkingIndicator } from "../components/WorkingIndicator";
 import type {
@@ -198,6 +199,7 @@ import {
   loadVerifiedIntegrationsScope,
   subscribeSessionGeneration,
 } from "../lib/session";
+import { useThreadDetails } from "../lib/thread-details";
 import type { SendAttempt } from "../lib/thread-feedback";
 import { confirmEchoes, subscribeDelivered, useThreadFeedback } from "../lib/thread-feedback";
 import { ThreadJumpAnchor } from "../lib/thread-jump";
@@ -596,6 +598,7 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   const [dismissedChoiceQuestions, setDismissedChoiceQuestions] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
   >(() => new Map());
+  const threadDetails = useThreadDetails(groupId ? undefined : botId);
   const reactionView = useMemo(
     () =>
       projectMessageReactions(
@@ -606,9 +609,9 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
             const blocks = applyLocalChoiceDismissals(message.blocks, dismissed);
             return blocks === message.blocks ? message : { ...message, blocks: [...blocks] };
           })
-          .filter((message) => hasVisibleMessagePresentation(message.blocks)),
+          .filter((message) => hasVisibleMessagePresentation(message.blocks, threadDetails)),
       ),
-    [dismissedChoiceQuestions, snap?.messages],
+    [dismissedChoiceQuestions, snap?.messages, threadDetails],
   );
   const visibleMessages = reactionView.visibleMessages;
   const latestMessageId = visibleMessages.at(-1)?.id ?? null;
@@ -3142,6 +3145,8 @@ const MessageBubble = memo(function MessageBubble({
   const colorScheme = useResolvedAppearance();
   const tokens = mobileTokens();
   const { t } = useI18n();
+  const router = useRouter();
+  const details = useThreadDetails(groupId ? undefined : botId);
   const [peerExpanded, setPeerExpanded] = useState(false);
   const artifactTarget: MobileArtifactTarget = groupId ? { groupId } : { botId };
   const cardBotId = message.botId ?? botId;
@@ -3270,9 +3275,24 @@ const MessageBubble = memo(function MessageBubble({
   if (special?.kind === "subagent") {
     const running = special.status === "running";
     const failed = special.status === "failed";
+    const runId = message.runId;
     return (
       <Pressable
         {...actionProps}
+        accessibilityRole={runId ? "button" : undefined}
+        onPress={
+          runId
+            ? () =>
+                router.push({
+                  pathname: "/subagent",
+                  params: {
+                    ...(groupId ? { groupId } : { botId }),
+                    runId,
+                    agentId: special.agentId,
+                  },
+                })
+            : undefined
+        }
         style={{
           width: "90%",
           borderRadius: 18,
@@ -3720,7 +3740,7 @@ const MessageBubble = memo(function MessageBubble({
       </View>
     );
   }
-  const segments = messagePresentationSegments(message.blocks);
+  const segments = messagePresentationSegments(message.blocks, details);
   const speaker =
     message.role === "bot" ? (memberName(members, message.botId) ?? botName) : undefined;
   const speakerColor =
@@ -3734,15 +3754,19 @@ const MessageBubble = memo(function MessageBubble({
   );
   return (
     <View style={{ gap: 8, width: "100%" }}>
-      {segments.map((segment, index) => (
-        <MessageTextCard
-          key={`${message.id}-content-${index}`}
-          message={{ ...message, blocks: segment.blocks }}
-          speaker={index === firstContent ? speaker : undefined}
-          speakerColor={index === firstContent ? speakerColor : undefined}
-          actionProps={actionProps}
-        />
-      ))}
+      {segments.map((segment, index) =>
+        segment.kind === "steps" ? (
+          <ToolStepsLine key={`${message.id}-steps-${index}`} block={segment.block} />
+        ) : (
+          <MessageTextCard
+            key={`${message.id}-content-${index}`}
+            message={{ ...message, blocks: segment.blocks }}
+            speaker={index === firstContent ? speaker : undefined}
+            speakerColor={index === firstContent ? speakerColor : undefined}
+            actionProps={actionProps}
+          />
+        ),
+      )}
       {choiceBlocks.map((block, index) => (
         <ChoiceCard
           key={`choice-${index}`}

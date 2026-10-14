@@ -13,6 +13,50 @@ import {
   truncateQuoteExcerpt,
 } from "./message-presentation";
 
+describe("per-chat detail visibility", () => {
+  const subagent: MessageBlock = {
+    kind: "subagent",
+    agentId: "a1",
+    name: "Research",
+    task: "Look it up.",
+    status: "completed",
+  };
+  const steps: MessageBlock = { kind: "steps", steps: [{ label: "Web search", count: 2 }] };
+
+  it("shows subagents unless the chat hides them", () => {
+    expect(hasVisibleMessagePresentation([subagent])).toBe(true);
+    expect(hasVisibleMessagePresentation([subagent], { showSubagents: true })).toBe(true);
+    expect(hasVisibleMessagePresentation([subagent], { showSubagents: false })).toBe(false);
+  });
+
+  it("shows tool steps only when the chat asks for them", () => {
+    expect(hasVisibleMessagePresentation([steps])).toBe(false);
+    expect(hasVisibleMessagePresentation([steps], { showToolSteps: true })).toBe(true);
+    expect(
+      hasVisibleMessagePresentation([{ kind: "steps", steps: [] }], { showToolSteps: true }),
+    ).toBe(false);
+    expect(
+      hasVisibleMessagePresentation(
+        [{ kind: "progress", text: "Using the page", activity: true }],
+        { showToolSteps: true },
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps steps in place between text when shown", () => {
+    const before: MessageBlock = { kind: "text", text: "Checking." };
+    const after: MessageBlock = { kind: "text", text: "Done." };
+    expect(messagePresentationSegments([before, steps, after], { showToolSteps: true })).toEqual([
+      { kind: "content", blocks: [before] },
+      { kind: "steps", block: steps },
+      { kind: "content", blocks: [after] },
+    ]);
+    expect(messagePresentationSegments([before, steps, after])).toEqual([
+      { kind: "content", blocks: [before, after] },
+    ]);
+  });
+});
+
 describe("mobile message presentation", () => {
   it("centers handoffs, inter-agent messages, and channel mirrors", () => {
     const blocks = [

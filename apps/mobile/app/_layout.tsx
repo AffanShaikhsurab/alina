@@ -238,6 +238,14 @@ export default function Layout() {
                       options={glassHeaderOptions(t("Chat settings"))}
                     />
                     <Stack.Screen name="thread" options={{ title: t("Thread") }} />
+                    <Stack.Screen
+                      name="subagent"
+                      options={{
+                        presentation: "formSheet",
+                        sheetAllowedDetents: [0.6, 1],
+                        sheetGrabberVisible: true,
+                      }}
+                    />
                     <Stack.Screen name="routine" options={glassHeaderOptions(t("Routine"))} />
                     <Stack.Screen name="computer" options={{ title: t("Computer") }} />
                     <Stack.Screen
