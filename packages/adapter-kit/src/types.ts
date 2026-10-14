@@ -570,6 +570,10 @@ export type AgentRuntimeEvent =
       status: "running" | "completed" | "failed";
       progress?: string;
       result?: string;
+      /** The rest of the run_subagent input, on the start and terminal events. */
+      instructions?: string;
+      modelProvider?: string;
+      modelId?: string;
     }
   | { type: "done"; text?: string };
 
