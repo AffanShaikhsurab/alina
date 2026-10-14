@@ -25,7 +25,8 @@ if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(bundleId)) {
 
 /** Replace the product name in user-facing sentences only ("Rakazo uses the microphone ..."). */
 function rename(value) {
-  if (typeof value === "string") return value.replace(/\bRakazo\b(?= (uses|turns|connects))/g, "Alina");
+  if (typeof value === "string")
+    return value.replace(/\bRakazo\b(?= (uses|turns|connects))/g, "Alina");
   if (Array.isArray(value)) return value.map(rename);
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rename(v)]));
