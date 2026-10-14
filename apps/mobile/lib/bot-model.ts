@@ -90,9 +90,62 @@ export function modelChangeInput(botId: string, key: string) {
   };
 }
 
+/** A quick switch keeps the bot's thinking level when the new model offers it too. */
+export function modelSwitchInput(
+  botId: string,
+  key: string,
+  thinkingLevel: string | null,
+  levels: readonly ThinkingLevel[],
+) {
+  const kept = levels.find((level) => level === thinkingLevel) ?? null;
+  return { ...modelChangeInput(botId, key), thinkingLevel: kept };
+}
+
 /** A requested compaction is done once the summary reaches the message it was asked for. */
 export function compactionReached(context: ThreadContext | null, throughSeq: number): boolean {
   return (context?.compactedThroughSeq ?? -1) >= throughSeq;
+}
+
+export type CompactionResult = "done" | "nothing" | "timeout" | "abandoned";
+
+/**
+ * Asks the server to compact the bot's thread, then polls its context until the summary reaches
+ * the requested message. Errors from the request itself (an older server without the procedure,
+ * consent refused) are thrown for the caller to show.
+ */
+export async function compactThread(
+  request: <T>(path: string, body: unknown) => Promise<T>,
+  botId: string,
+  options: {
+    alive: () => boolean;
+    onContext?: (context: ThreadContext) => void;
+    pollMs?: number;
+    waitMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  },
+): Promise<CompactionResult> {
+  const {
+    alive,
+    onContext,
+    pollMs = 2_000,
+    waitMs = 3 * 60_000,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now = Date.now,
+  } = options;
+  const result = await request<{ queued: boolean; throughSeq: number | null }>("threads/compact", {
+    botId,
+  });
+  if (!result.queued || result.throughSeq === null) return "nothing";
+  const deadline = now() + waitMs;
+  while (alive() && now() < deadline) {
+    await sleep(pollMs);
+    const next = await request<ThreadContext>("threads/context", { botId }).catch(() => null);
+    if (!alive()) return "abandoned";
+    if (next) onContext?.(next);
+    if (compactionReached(next, result.throughSeq)) return "done";
+  }
+  return alive() ? "timeout" : "abandoned";
 }
 
 export function thinkingLevelLabel(level: ThinkingLevel, t: (message: string) => string) {

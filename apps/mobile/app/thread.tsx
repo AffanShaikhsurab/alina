@@ -1545,6 +1545,10 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
     setError(null);
   }, [threadKey]);
 
+  function openModelSheet() {
+    if (botId) router.push({ pathname: "/bot-model", params: { botId } });
+  }
+
   function runSlashAction(action: SlashActionId) {
     if (action === "chat-settings") {
       if (inGroup && groupId) {
@@ -2585,6 +2589,7 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
           stop={stop}
           startVoiceCall={startVoiceCall}
           onSlashAction={runSlashAction}
+          openModelSheet={openModelSheet}
         />
       </View>
       <Modal

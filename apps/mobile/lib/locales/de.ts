@@ -801,4 +801,7 @@ export const DE_MESSAGES: Record<string, string> = {
   "Nothing new to compact": "Nichts Neues zum Komprimieren",
   "Could not compact. Try again.": "Komprimieren fehlgeschlagen. Versuche es erneut.",
   "Could not save model": "Modell konnte nicht gespeichert werden",
+  "Now using {model}": "Jetzt mit {model}",
+  "Compacting…": "Wird komprimiert …",
+  "Context compacted": "Kontext komprimiert",
 };

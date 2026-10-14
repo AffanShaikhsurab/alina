@@ -13,6 +13,39 @@ const input = vi.hoisted(() => ({
   change: (_value: string) => {},
   key: (_event: { nativeEvent: { key: string } }) => {},
 }));
+const models = vi.hoisted(() => ({
+  state: {
+    bot: { thinkingLevel: "high" } as { thinkingLevel: string | null } | null,
+    loaded: true,
+    loadError: null as string | null,
+    selectedKey: "anthropic::claude",
+    modelChoices: [
+      { key: "", label: "Space default" },
+      { key: "anthropic::claude", label: "Claude Sonnet" },
+      { key: "openrouter::kimi-k2", label: "Kimi K2" },
+      { key: "openrouter::kimi-dev", label: "Kimi Dev" },
+    ],
+    levelsFor: (_key: string): string[] => ["low", "high"],
+    save: async (_input: unknown): Promise<unknown> => ({ ok: true, latest: true }),
+  },
+  loads: [] as number[],
+}));
+const api = vi.hoisted(() => ({
+  rpc: async (_path: string, _body?: unknown): Promise<unknown> => ({}),
+}));
+vi.mock("./use-bot-model", () => ({
+  useBotModel: (_botId: string | undefined, loadKey: number) => {
+    models.loads.push(loadKey);
+    return models.state;
+  },
+}));
+vi.mock("./api", () => ({ rpc: (path: string, body?: unknown) => api.rpc(path, body) }));
+vi.mock("./haptics", () => ({
+  selectionHaptic: vi.fn(),
+  tapHaptic: vi.fn(),
+  successHaptic: vi.fn(),
+  errorHaptic: vi.fn(),
+}));
 vi.mock("react-native", () => {
   const Surface = ({ children, testID }: { children?: ReactNode; testID?: string }) =>
     createElement("div", { "data-testid": testID }, children);
@@ -20,20 +53,30 @@ vi.mock("react-native", () => {
     View: Surface,
     ScrollView: Surface,
     Text: Surface,
+    ActivityIndicator: () => createElement("div", { "data-testid": "busy" }),
+    StyleSheet: { hairlineWidth: 0.5 },
     Pressable: ({
       children,
       onPress,
       accessibilityLabel,
+      accessibilityState,
       disabled,
     }: {
       children?: ReactNode;
       onPress: () => void;
       accessibilityLabel: string;
+      accessibilityState?: { selected?: boolean };
       disabled?: boolean;
     }) =>
       createElement(
         "button",
-        { type: "button", onClick: onPress, "aria-label": accessibilityLabel, disabled },
+        {
+          type: "button",
+          onClick: onPress,
+          "aria-label": accessibilityLabel,
+          "aria-pressed": accessibilityState?.selected,
+          disabled,
+        },
         children,
       ),
     TextInput: ({
@@ -58,8 +101,42 @@ vi.mock("../components/glass-surface", () => ({
   GlassSurface: ({ children }: { children?: ReactNode }) => children,
 }));
 vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => null }));
+vi.mock("../components/bot-avatar", () => ({ BotAvatar: () => null }));
+vi.mock("../components/motion", async () => {
+  const { createElement: h } = await import("react");
+  const Pass = ({ children }: { children?: ReactNode }) => h("div", null, children);
+  return {
+    MotionView: Pass,
+    LayoutAnimationConfig: Pass,
+    popoverEntering: undefined,
+    popoverExiting: undefined,
+    popoverLayout: undefined,
+    quietEntering: undefined,
+    quietExiting: undefined,
+    PressScale: ({
+      children,
+      onPress,
+      accessibilityLabel,
+      disabled,
+    }: {
+      children?: ReactNode;
+      onPress: () => void;
+      accessibilityLabel: string;
+      disabled?: boolean;
+    }) =>
+      h(
+        "button",
+        { type: "button", onClick: onPress, "aria-label": accessibilityLabel, disabled },
+        children,
+      ),
+  };
+});
 vi.mock("./native", () => ({ useMobileTokens: () => ({}), useResolvedAppearance: () => "light" }));
-vi.mock("./i18n", () => ({ useI18n: () => ({ t: (text: string) => text }) }));
+vi.mock("./i18n", () => {
+  const t = (text: string, values?: Record<string, string>) =>
+    text.replace(/\{(\w+)\}/g, (_match, key: string) => values?.[key] ?? `{${key}}`);
+  return { t, useI18n: () => ({ t }) };
+});
 
 const skill = {
   id: "skill-1",
@@ -86,6 +163,7 @@ const props: Omit<ComponentProps<typeof ThreadComposer>, "ref"> = {
   stop: vi.fn(async () => {}),
   startVoiceCall: vi.fn(async () => {}),
   onSlashAction: vi.fn(),
+  openModelSheet: vi.fn(),
 };
 
 describe("thread composer isolation", () => {
@@ -176,12 +254,12 @@ describe("thread composer isolation", () => {
 
   it("selects mention and skill popovers and removes chips with backspace", () => {
     type("Hello @He");
-    press("@{name}");
+    press("@Helper");
     expect(composer.current!.snapshot().mentions).toEqual([bot]);
     expect(container.querySelector("input")!.value).toBe("Hello ");
     expect(container.querySelector('[data-testid="mention-picker"]')).toBeNull();
     type("/Wri");
-    press("Skill {name}");
+    press("Skill Writing");
     expect(composer.current!.snapshot().skill).toEqual(skill);
     expect(container.querySelector("input")!.value).toBe("");
     expect(container.querySelector('[data-testid="slash-picker"]')).toBeNull();
@@ -200,5 +278,132 @@ describe("thread composer isolation", () => {
     expect(container.querySelector('[data-testid="slash-picker"]')).toBeNull();
     press("Call");
     expect(props.startVoiceCall).toHaveBeenCalledOnce();
+  });
+
+  function rowLabels(testId: string) {
+    return [
+      ...container.querySelectorAll<HTMLButtonElement>(`[data-testid="${testId}"] button`),
+    ].map((button) => button.getAttribute("aria-label"));
+  }
+  function button(label: string) {
+    return container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  }
+
+  it("lists commands first, then skills, then settings, and filters as you type", () => {
+    type("/");
+    expect(rowLabels("slash-picker")).toEqual([
+      "Model",
+      "Compact",
+      "Context",
+      "Skill Writing",
+      "Chat Settings",
+      "Settings: General",
+      "Settings: Usage",
+    ]);
+    type("/mo");
+    expect(rowLabels("slash-picker")).toEqual(["Model"]);
+    type("/co");
+    expect(rowLabels("slash-picker")).toEqual(["Compact", "Context"]);
+  });
+
+  it("offers no chat commands in a group thread", () => {
+    render({ botId: undefined });
+    type("/");
+    expect(rowLabels("slash-picker")).not.toContain("Model");
+    expect(rowLabels("slash-picker")).toContain("Skill Writing");
+  });
+
+  it("turns the popup into the model list, checks the current model and filters it", () => {
+    type("/");
+    press("Model");
+    expect(container.querySelector("input")!.value).toBe("/model ");
+    expect(models.loads.at(-1)).toBeGreaterThan(0);
+    expect(rowLabels("slash-picker")).toEqual([
+      "Space default",
+      "Claude Sonnet",
+      "Kimi K2",
+      "Kimi Dev",
+    ]);
+    expect(button("Claude Sonnet")!.getAttribute("aria-pressed")).toBe("true");
+    expect(button("Kimi K2")!.getAttribute("aria-pressed")).toBe("false");
+    type("/model kimi");
+    expect(rowLabels("slash-picker")).toEqual(["Kimi K2", "Kimi Dev"]);
+    type("/model kimi k2");
+    expect(rowLabels("slash-picker")).toEqual(["Kimi K2"]);
+  });
+
+  it("switches the model through the bot update, keeps thinking, clears and confirms", async () => {
+    const save = vi.spyOn(models.state, "save");
+    type("/model kimi");
+    await act(async () => button("Kimi K2")!.click());
+    expect(save).toHaveBeenCalledWith({
+      botId: "bot-1",
+      modelProvider: "openrouter",
+      modelId: "kimi-k2",
+      thinkingLevel: "high",
+    });
+    expect(container.querySelector("input")!.value).toBe("");
+    expect(container.querySelector('[data-testid="slash-picker"]')).toBeNull();
+    expect(container.textContent).toContain("Now using Kimi K2");
+    expect(props.send).not.toHaveBeenCalled();
+  });
+
+  it("shows the save error when the switch fails", async () => {
+    vi.spyOn(models.state, "save").mockResolvedValueOnce({
+      ok: false,
+      latest: true,
+      error: "Could not save model",
+    });
+    type("/model ");
+    await act(async () => button("Kimi Dev")!.click());
+    expect(container.textContent).toContain("Could not save model");
+  });
+
+  it("never sends a bare slash or an unknown command, but sends a slash mid-sentence", () => {
+    type("/");
+    expect(button("Send")!.disabled).toBe(true);
+    press("Send");
+    type("/shrug");
+    expect(button("Send")!.disabled).toBe(true);
+    press("Send");
+    expect(props.send).not.toHaveBeenCalled();
+    expect(container.querySelector("input")!.value).toBe("/shrug");
+    type("try a / here");
+    press("Send");
+    expect(props.send).toHaveBeenCalledOnce();
+  });
+
+  it("runs a typed command on Send instead of sending it", async () => {
+    type("/context");
+    press("Send");
+    expect(props.openModelSheet).toHaveBeenCalledOnce();
+    expect(container.querySelector("input")!.value).toBe("");
+    type("/model kimi k2");
+    const save = vi.spyOn(models.state, "save");
+    await act(async () => button("Send")!.click());
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelId: "kimi-k2" }));
+    expect(props.send).not.toHaveBeenCalled();
+  });
+
+  it("compacts from /compact and shows an older server's error without crashing", async () => {
+    const calls: string[] = [];
+    api.rpc = async (path) => {
+      calls.push(path);
+      if (path === "threads/compact") return { queued: false, throughSeq: null };
+      return {};
+    };
+    type("/compact");
+    await act(async () => button("Send")!.click());
+    expect(calls).toEqual(["threads/compact"]);
+    expect(container.textContent).toContain("Nothing new to compact");
+    expect(props.send).not.toHaveBeenCalled();
+
+    api.rpc = async () => {
+      throw new Error("Not found");
+    };
+    type("/");
+    await act(async () => button("Compact")!.click());
+    expect(container.querySelector("input")!.value).toBe("");
+    expect(container.textContent).toMatch(/Not found|Could not compact/);
   });
 });
