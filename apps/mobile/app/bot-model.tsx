@@ -49,6 +49,7 @@ export default function BotModelScreen() {
   const saveGeneration = useRef(0);
   /** What the server last accepted, so a failed save never leaves an unsaved pick on screen. */
   const confirmed = useRef<MobileBot | null>(null);
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     alive.current = true;
@@ -123,8 +124,11 @@ export default function BotModelScreen() {
     const generation = ++saveGeneration.current;
     setBot({ ...bot, ...input });
     setNotice(null);
+    // One update at a time, in pick order, so an older save can never land after a newer one.
+    const request = saveQueue.current.then(() => rpc("bots/update", input));
+    saveQueue.current = request.catch(() => undefined);
     try {
-      await rpc("bots/update", input);
+      await request;
       confirmed.current = { ...(confirmed.current ?? previous), ...input };
       if (generation === saveGeneration.current) refreshContext();
     } catch (err) {
