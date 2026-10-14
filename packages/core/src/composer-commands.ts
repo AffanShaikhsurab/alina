@@ -67,7 +67,8 @@ export type SlashSubmitIntent =
  */
 export function slashSubmitIntent(
   draft: string,
-  skillNames: readonly string[] = [],
+  /** `null` while the skill catalog is unknown: an unrecognised "/word" may be a skill, so it sends. */
+  skillNames: readonly string[] | null = [],
 ): SlashSubmitIntent {
   const text = draft.trim();
   const parsed = parseSlashDraft(text);
@@ -75,6 +76,7 @@ export function slashSubmitIntent(
   if (!parsed.name) return parsed.args?.trim() ? { kind: "send" } : { kind: "hold" };
   const command = findChatCommand(parsed.name);
   if (command) return { kind: "run", command, args: parsed.args?.trim() ?? "" };
+  if (skillNames === null) return { kind: "send" };
   // Skill names may hold spaces ("/Daily standup notes"), so match the start of the text.
   const rest = text.slice(1).toLowerCase();
   const typedSkill = skillNames.some((skill) => {

@@ -1,12 +1,12 @@
 import type { VoiceChatGroup } from "@rakazo/core";
 import { speechFromBlocks, voiceChatDuration, voiceChatSummary } from "@rakazo/core";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { MobileMessage } from "../lib/api";
 import { voiceChatClock } from "../lib/call-screen";
 import { useI18n } from "../lib/i18n";
 import { native, useMobileTokens } from "../lib/native";
-import { MotionView, popoverLayout, quietEntering } from "./motion";
+import { MotionView, quietEntering } from "./motion";
 import { NativeSymbol } from "./native-symbol";
 
 /** One call's exchange as a centred "Voice chat · 00:21" line; tapping it shows the transcript. */
@@ -16,7 +16,9 @@ export function VoiceChatCard({ group }: { group: VoiceChatGroup<MobileMessage> 
   const [open, setOpen] = useState(false);
   const summary = voiceChatSummary(group);
   return (
-    <MotionView layout={popoverLayout} style={styles.wrap}>
+    // No layout transition here: this row lives in the inverted thread list, which sizes cells
+    // itself, so only the transcript block fades in.
+    <View style={styles.wrap}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={open ? t("Hide transcript") : t("Show transcript")}
@@ -71,7 +73,7 @@ export function VoiceChatCard({ group }: { group: VoiceChatGroup<MobileMessage> 
           {summary}
         </Text>
       ) : null}
-    </MotionView>
+    </View>
   );
 }
 

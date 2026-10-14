@@ -59,6 +59,8 @@ export type ThreadComposerHandle = {
 type ThreadComposerProps = {
   ref: Ref<ThreadComposerHandle>;
   agentSkills: AgentSkillCatalogEntry[];
+  /** False until the skill catalog has loaded; an unknown "/word" may be a skill until then. */
+  agentSkillsLoaded?: boolean;
   composerMentionTargets: ReturnType<typeof buildComposerMentionOptions>;
   composerPrompt: string;
   replyTargetId?: string;
@@ -94,6 +96,7 @@ type ComposerNotice = { text: string; error?: boolean; busy?: boolean };
 export function ThreadComposer({
   ref,
   agentSkills,
+  agentSkillsLoaded = true,
   composerMentionTargets,
   composerPrompt,
   replyTargetId,
@@ -126,6 +129,8 @@ export function ThreadComposer({
   const botModel = useBotModel(botId, modelLoad);
   const alive = useRef(true);
   const compacting = useRef(false);
+  /** A "/model <query>" sent before the model list loaded; it is picked once the list lands. */
+  const pendingModelQuery = useRef<string | null>(null);
   useImperativeHandle(ref, () => ({
     snapshot: () => ({
       promptText: serializeComposerPrompt(draft, selectedSkill, selectedMentions),
@@ -204,7 +209,9 @@ export function ThreadComposer({
         })
       : [];
   const modelListPending = modelMode && !botModel.loaded;
+  const modelNoMatch = modelMode && botModel.loaded && modelOptions.length === 0;
   const slashRows =
+    Number(modelNoMatch) +
     commandOptions.length +
     modelOptions.length +
     slashSkillOptions.length +
@@ -261,6 +268,7 @@ export function ThreadComposer({
         void pickModel(only.key, only.label);
         return;
       }
+      if (args && !botModel.loaded) pendingModelQuery.current = args;
       updateDraft(`/model ${args}`);
       return;
     }
@@ -314,15 +322,30 @@ export function ThreadComposer({
     }
   }
 
-  // A slash command acts or waits in the composer; it is never sent to the bot as text.
+  // Send a "/model <query>" that arrived before the list loaded once it lands, if one model fits.
+  useEffect(() => {
+    const query = pendingModelQuery.current;
+    if (query === null || !botModel.loaded) return;
+    pendingModelQuery.current = null;
+    const matches = filterModelChoices(botModel.modelChoices, query);
+    const only = matches.length === 1 ? matches[0] : undefined;
+    if (only) void pickModel(only.key, only.label);
+  }, [botModel.loaded, botModel.modelChoices]);
+
+  // A slash command acts or waits in the composer; it is never sent to the bot as text. A skill
+  // chip makes the draft that skill's argument, so it is the only case that skips the check.
   const intent =
-    selectedSkill === null && selectedMentions.length === 0
-      ? slashSubmitIntent(
-          draft,
-          agentSkills.map((skill) => skill.name),
-        )
+    selectedSkill === null
+      ? slashSubmitIntent(draft, agentSkillsLoaded ? agentSkills.map((skill) => skill.name) : null)
       : ({ kind: "send" } as const);
-  const held = intent.kind === "hold" || (intent.kind === "run" && !botId);
+  // A typed "/model <query>" only picks when exactly one model fits; otherwise tap a row.
+  const modelQueryUnresolved =
+    intent.kind === "run" &&
+    intent.command === "model" &&
+    intent.args !== "" &&
+    botModel.loaded &&
+    filterModelChoices(botModel.modelChoices, intent.args).length !== 1;
+  const held = intent.kind === "hold" || (intent.kind === "run" && !botId) || modelQueryUnresolved;
 
   function submit() {
     if (held) return;
@@ -425,6 +448,13 @@ export function ThreadComposer({
                 ) : (
                   <ActivityIndicator color={tokens.mutedForeground} />
                 )}
+              </View>
+            ) : null}
+            {modelNoMatch ? (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
+                <Text style={{ color: tokens.mutedForeground, fontSize: 15 }}>
+                  {t("No matching models")}
+                </Text>
               </View>
             ) : null}
             {modelOptions.map((choice) => {

@@ -104,4 +104,14 @@ describe("slashSubmitIntent", () => {
     });
     expect(slashSubmitIntent("/Daily", ["Daily standup"])).toEqual({ kind: "hold" });
   });
+
+  it("sends an unrecognised word while the skill catalog is unknown, but still holds the rest", () => {
+    expect(slashSubmitIntent("/my-skill do it", null)).toEqual({ kind: "send" });
+    expect(slashSubmitIntent("/", null)).toEqual({ kind: "hold" });
+    expect(slashSubmitIntent("/compact", null)).toEqual({
+      kind: "run",
+      command: "compact",
+      args: "",
+    });
+  });
 });

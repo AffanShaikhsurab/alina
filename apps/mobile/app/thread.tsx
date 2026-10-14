@@ -571,6 +571,8 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   }, [streamResponses]);
   const activeThreadId = useRef<string | undefined>(undefined);
   const [agentSkills, setAgentSkills] = useState<AgentSkillCatalogEntry[]>([]);
+  /** Stays false when the catalog fails to load, so a typed skill name is never held back. */
+  const [agentSkillsLoaded, setAgentSkillsLoaded] = useState(false);
   const [mentionBots, setMentionBots] = useState<MobileBot[]>([]);
   // The call outlives renders, so its switch check reads the newest bot list from here.
   const mentionBotsRef = useRef<MobileBot[]>([]);
@@ -725,7 +727,10 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
 
   useEffect(() => {
     void rpc<AgentSkillCatalogEntry[]>("agentSkills/list")
-      .then(setAgentSkills)
+      .then((skills) => {
+        setAgentSkills(skills);
+        setAgentSkillsLoaded(true);
+      })
       .catch(() => setAgentSkills([]));
   }, []);
 
@@ -1932,13 +1937,17 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
   const liveItems = useMemo(() => groupVoiceChats(visibleMessages).reverse(), [visibleMessages]);
   // Only rows that just arrived at the bottom animate in; first paint and older pages stay still.
   const previousItemKeys = useRef<{ thread: string | undefined; keys: string[] } | null>(null);
+  const liveItemKeys = useMemo(() => liveItems.map(threadItemKey).reverse(), [liveItems]);
+  // Read the committed keys during render; only a committed render records them, so a discarded
+  // or double-invoked render cannot swallow an arrival.
   const arriving = useMemo(() => {
-    const keys = liveItems.map(threadItemKey).reverse();
     const last = previousItemKeys.current;
     const previous = last && last.thread === threadKey ? last.keys : null;
-    previousItemKeys.current = { thread: threadKey, keys };
-    return new Set(arrivingKeys(previous, keys));
-  }, [liveItems, threadKey]);
+    return new Set(arrivingKeys(previous, liveItemKeys));
+  }, [liveItemKeys, threadKey]);
+  useLayoutEffect(() => {
+    previousItemKeys.current = { thread: threadKey, keys: liveItemKeys };
+  }, [liveItemKeys, threadKey]);
   const messagesById = useMemo(
     () => new Map((snap?.messages ?? []).map((message) => [message.id, message])),
     [snap?.messages],
@@ -2594,6 +2603,7 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
           key={threadKey}
           ref={composerRef}
           agentSkills={agentSkills}
+          agentSkillsLoaded={agentSkillsLoaded}
           composerMentionTargets={composerMentionTargets}
           composerPrompt={composerPrompt}
           replyTargetId={replyTarget?.id}

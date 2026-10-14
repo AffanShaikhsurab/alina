@@ -373,6 +373,45 @@ describe("thread composer isolation", () => {
     expect(props.send).toHaveBeenCalledOnce();
   });
 
+  it("holds Send on a /model query that fits no model or several, and says so when none fit", () => {
+    type("/model gemini");
+    expect(rowLabels("slash-picker")).toEqual([]);
+    expect(container.textContent).toContain("No matching models");
+    expect(button("Send")!.disabled).toBe(true);
+    type("/model kimi");
+    expect(button("Send")!.disabled).toBe(true);
+    press("Send");
+    expect(props.send).not.toHaveBeenCalled();
+  });
+
+  it("picks a /model query sent before the list loaded once it lands", async () => {
+    const save = vi.spyOn(models.state, "save");
+    models.state.loaded = false;
+    try {
+      type("/model kimi k2");
+      await act(async () => button("Send")!.click());
+      expect(save).not.toHaveBeenCalled();
+      expect(props.send).not.toHaveBeenCalled();
+      models.state.loaded = true;
+      render();
+      await act(async () => {});
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelId: "kimi-k2" }));
+    } finally {
+      models.state.loaded = true;
+    }
+  });
+
+  it("holds an unknown command beside a mention, and sends one while skills are unknown", () => {
+    type("Hi @He");
+    press("@Helper");
+    type("/shrug");
+    expect(button("Send")!.disabled).toBe(true);
+    render({ agentSkillsLoaded: false });
+    type("/my-skill run it");
+    press("Send");
+    expect(props.send).toHaveBeenCalledOnce();
+  });
+
   it("runs a typed command on Send instead of sending it", async () => {
     type("/context");
     press("Send");
