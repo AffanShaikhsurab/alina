@@ -47,6 +47,8 @@ export default function BotModelScreen() {
   const fail = (text: string) => setNotice({ text, error: true });
   const alive = useRef(true);
   const saveGeneration = useRef(0);
+  /** What the server last accepted, so a failed save never leaves an unsaved pick on screen. */
+  const confirmed = useRef<MobileBot | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -74,6 +76,7 @@ export default function BotModelScreen() {
     ])
       .then(([nextBot, nextMe, nextCatalog, nextCredentials]) => {
         if (!alive.current) return;
+        confirmed.current = nextBot;
         setBot(nextBot);
         setMe(nextMe);
         setCatalog(nextCatalog);
@@ -122,10 +125,11 @@ export default function BotModelScreen() {
     setNotice(null);
     try {
       await rpc("bots/update", input);
+      confirmed.current = { ...(confirmed.current ?? previous), ...input };
       if (generation === saveGeneration.current) refreshContext();
     } catch (err) {
       if (!alive.current || generation !== saveGeneration.current) return;
-      setBot(previous);
+      setBot(confirmed.current ?? previous);
       fail(errorText(err, t("Could not save model")));
     }
   }
@@ -202,7 +206,11 @@ export default function BotModelScreen() {
               label={t("Thinking")}
               onChange={(level) => {
                 if (botId) {
-                  void save({ botId, thinkingLevel: (level || null) as ThinkingLevel | null });
+                  // Resend the shown model too, so this save also settles a model pick still in flight.
+                  void save({
+                    ...modelChangeInput(botId, selectedKey),
+                    thinkingLevel: (level || null) as ThinkingLevel | null,
+                  });
                 }
               }}
               value={bot?.thinkingLevel ?? ""}
