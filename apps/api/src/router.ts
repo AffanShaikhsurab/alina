@@ -268,6 +268,7 @@ import {
   UpdaterProxyError,
 } from "./server-update.js";
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
+import { requestThreadCompaction, threadContextStatus } from "./thread-context.js";
 import {
   isBackgroundRun,
   isPeerRun,
@@ -2477,6 +2478,20 @@ export function createRouter(deps: RouterDeps) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         await setThreadUnreadState(deps.prisma, context.actor, target, true);
         return { ok: true as const };
+      }),
+      context: authed.threads.context.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        const me = await meDto(deps, context.actor);
+        return threadContextStatus(deps, context.actor, target, {
+          provider: me.defaultProvider,
+          modelId: me.defaultModel,
+        });
+      }),
+      compact: authed.threads.compact.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        return requestThreadCompaction(deps, target);
       }),
     },
     computer: {

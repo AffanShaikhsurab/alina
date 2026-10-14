@@ -100,7 +100,30 @@ describe("createBackgroundJobHandlers", () => {
         resolveModel,
       },
       "thread-1",
+      {},
     );
+  });
+
+  it("runs a user-requested compaction under the retrieval policy", async () => {
+    vi.mocked(compactHistory).mockClear();
+    const handlers = createBackgroundJobHandlers({
+      executor: { contextStrategy: "retrieval" } as ReturnType<typeof createRunExecutor>,
+      prisma: {} as unknown as PrismaClient,
+      sandbox: {} as unknown as SandboxProvider,
+      home: {} as unknown as AgentHomeStore,
+      jobs: {} as unknown as JobPublisher,
+      events: {} as unknown as ThreadEvents,
+      workerId: "worker-fixture",
+      runtime: {} as unknown as AgentRuntime,
+      secretStore: {} as unknown as EncryptedSecretStore,
+      memoryProviders: { resolve: vi.fn(async () => null) },
+    });
+
+    await handlers["history.compact"]({ threadId: "thread-fixture", throughSeq: 41 });
+
+    expect(compactHistory).toHaveBeenCalledWith(expect.anything(), "thread-fixture", {
+      throughSeq: 41,
+    });
   });
 
   it.each([undefined, "retrieval", "snapshots", "cache-aware"] as const)(

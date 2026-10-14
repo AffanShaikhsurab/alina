@@ -19,7 +19,10 @@ const payloadSchemas = {
     leaseId: z.string().min(1),
   }),
   "skill.teaching-expire": z.object({ skillId: z.string().min(1) }),
-  "history.compact": z.object({ threadId: z.string().min(1) }),
+  "history.compact": z.object({
+    threadId: z.string().min(1),
+    throughSeq: z.number().int().nonnegative().optional(),
+  }),
   "messaging.deliver": z.object({ runId: z.string().min(1).optional() }),
   "cloud_agent.poll": z.object({ agentId: z.string().min(1) }),
 } satisfies { [Name in BackgroundJobName]: z.ZodType<BackgroundJobPayloads[Name]> };
@@ -137,6 +140,19 @@ export function historyCompactJob(threadId: string): BackgroundJob {
     name: "history.compact",
     payload: { threadId },
     replaceKey: historyCompactJobKey(threadId),
+    maxAttempts: HISTORY_COMPACT_MAX_ATTEMPTS,
+  };
+}
+
+/**
+ * A user-requested compaction through `throughSeq`. Its own key keeps a later automatic
+ * enqueue from replacing it and dropping the target.
+ */
+export function manualHistoryCompactJob(threadId: string, throughSeq: number): BackgroundJob {
+  return {
+    name: "history.compact",
+    payload: { threadId, throughSeq },
+    replaceKey: `${historyCompactJobKey(threadId)}:manual`,
     maxAttempts: HISTORY_COMPACT_MAX_ATTEMPTS,
   };
 }

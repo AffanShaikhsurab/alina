@@ -101,8 +101,14 @@ export function createBackgroundJobHandlers(deps: {
     },
     "history.compact": async (payload) => {
       // Retrieval policies use stored context without paid message-count compaction.
-      // Skip legacy backlog work after a policy change.
-      if (deps.executor.contextStrategy && deps.executor.contextStrategy !== "current") return;
+      // Skip legacy backlog work after a policy change. A user-requested compaction
+      // (`throughSeq`) runs under every policy: the user asked to pay for it.
+      if (
+        payload.throughSeq === undefined &&
+        deps.executor.contextStrategy &&
+        deps.executor.contextStrategy !== "current"
+      )
+        return;
       await compactHistory(
         {
           prisma: deps.prisma,
@@ -114,6 +120,7 @@ export function createBackgroundJobHandlers(deps: {
           ...(deps.executor.resolveModel ? { resolveModel: deps.executor.resolveModel } : {}),
         },
         payload.threadId,
+        payload.throughSeq === undefined ? {} : { throughSeq: payload.throughSeq },
       );
     },
   };

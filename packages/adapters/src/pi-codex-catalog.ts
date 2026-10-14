@@ -1,7 +1,7 @@
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import type { SecretStore } from "@rakazo/adapter-kit";
 import type { ThinkingLevel } from "@rakazo/contracts";
-import { ThinkingLevelSchema } from "@rakazo/contracts";
+import { MAX_MODEL_CONTEXT_WINDOW, ThinkingLevelSchema } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import type { ModelCredentialAuthKind } from "./pi-catalog-availability.js";
 import type { PiCatalogEntry } from "./pi-models.js";
@@ -550,9 +550,14 @@ export function applyCodexLiveCatalog(
 
 function withLiveFields(entry: PiCatalogEntry, model: CodexCatalogModel): PiCatalogEntry {
   const thinkingLevels = liveThinkingLevels(model);
+  // The account's live window can be narrower than the static catalog's.
+  const withWindow =
+    model.contextWindow && model.contextWindow <= MAX_MODEL_CONTEXT_WINDOW
+      ? { ...entry, contextWindow: model.contextWindow }
+      : entry;
   return thinkingLevels
-    ? { ...entry, reasoning: true, thinkingLevels }
-    : { ...entry, reasoning: entry.reasoning || model.reasoningEfforts.length > 0 };
+    ? { ...withWindow, reasoning: true, thinkingLevels }
+    : { ...withWindow, reasoning: entry.reasoning || model.reasoningEfforts.length > 0 };
 }
 
 function liveThinkingLevels(model: CodexCatalogModel): ThinkingLevel[] | undefined {

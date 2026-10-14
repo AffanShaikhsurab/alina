@@ -1,5 +1,5 @@
 import type { AgentRunRequest, AgentRuntime, JobPublisher } from "@rakazo/adapter-kit";
-import { historyCompactJob } from "@rakazo/adapter-kit";
+import { historyCompactJob, manualHistoryCompactJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import { blocksToAgentHistoryText } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
@@ -219,7 +219,27 @@ export interface CompactHistoryDeps {
   }) => Promise<AgentRunRequest["model"]>;
 }
 
-export async function compactHistory(deps: CompactHistoryDeps, threadId: string): Promise<void> {
+/**
+ * Where a user-requested compaction through `throughSeq` starts. A run loads only the newest
+ * `LEGACY_HISTORY_WINDOW_SIZE` messages, so older ones are already outside the model's history;
+ * summarizing them would cost a model call per batch without shrinking any prompt.
+ */
+export function manualCompactionFloor(
+  historyCompactedUpToSeq: number | null,
+  throughSeq: number,
+): number {
+  return Math.max(
+    historyCompactedUpToSeq ?? NOTHING_COMPACTED,
+    throughSeq - LEGACY_HISTORY_WINDOW_SIZE,
+  );
+}
+
+export async function compactHistory(
+  deps: CompactHistoryDeps,
+  threadId: string,
+  options: { throughSeq?: number } = {},
+): Promise<void> {
+  const { throughSeq } = options;
   const thread = await deps.prisma.thread.findUniqueOrThrow({ where: { id: threadId } });
   if (!thread.botId) return;
   const previousCursor = thread.historyCompactedUpToSeq;
@@ -276,9 +296,18 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
 
   if (!bootstrappingLocalSummary) {
     const range = nextCompactionBatchRange(previousCursor, COMPACTION_BATCH_SIZE);
-    fromSeqExclusive = range.fromSeqExclusive;
+    fromSeqExclusive =
+      throughSeq === undefined
+        ? range.fromSeqExclusive
+        : manualCompactionFloor(previousCursor, throughSeq);
     batch = await deps.prisma.message.findMany({
-      where: { threadId, seq: { gt: range.fromSeqExclusive } },
+      where: {
+        threadId,
+        seq: {
+          gt: fromSeqExclusive,
+          ...(throughSeq === undefined ? {} : { lte: throughSeq }),
+        },
+      },
       orderBy: { seq: "asc" },
       take: range.take,
       select: { seq: true, role: true, blocks: true },
@@ -504,6 +533,16 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
     } catch (error) {
       getLogger().error("history.compact could not purge stale semantic memory", error);
     }
+  }
+
+  // A user-requested compaction continues, one batch per job, until it reaches its target.
+  // A clear in the meantime ends it: the messages it was asked about no longer exist.
+  if (
+    throughSeq !== undefined &&
+    latest.historyCompactionGeneration === previousGeneration &&
+    (latest.historyCompactedUpToSeq ?? NOTHING_COMPACTED) < throughSeq
+  ) {
+    await deps.jobs.enqueue(manualHistoryCompactJob(threadId, throughSeq));
   }
 
   // Drain a pre-existing backlog at queue speed rather than one batch per completed run, which

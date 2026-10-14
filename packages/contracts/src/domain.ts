@@ -8,7 +8,7 @@ import {
   isCloudflareAiGatewayProvider,
 } from "./cloudflare-ai-gateway.js";
 import { ThreadMessageSchema } from "./events.js";
-import { Id, MemoryScope, RunStatus, SandboxKind } from "./ids.js";
+import { Id, IsoDate, MemoryScope, RunStatus, SandboxKind } from "./ids.js";
 import { McpHeadersSchema, McpRemoteEndpointSchema, McpTransportSchema } from "./mcp.js";
 import { RunTriggerSchema } from "./runs.js";
 
@@ -1191,8 +1191,28 @@ export const ModelCatalogEntrySchema = z.object({
   placeholder: z.boolean().optional(),
   /** Models share one pinned HTTPS models-list URL that can be probed. */
   catalogProbe: z.boolean().optional(),
+  /** Tokens the model accepts per call, when the catalog knows it. */
+  contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).optional(),
 });
 export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
+
+/** How full a bot thread's model context is, measured from its latest conversational call. */
+export const ThreadContextSchema = z.object({
+  /** Model the bot's next turn uses: its own choice, else the space default. */
+  provider: z.string().nullable(),
+  modelId: z.string().nullable(),
+  contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).nullable(),
+  /** Tokens the latest conversational model call carried; null until one is measured. */
+  usedTokens: z.number().int().nonnegative().nullable(),
+  measuredAt: IsoDate.nullable(),
+  /** When the conversation summary last changed; null when it never has. */
+  compactedAt: IsoDate.nullable(),
+  /** Latest message sequence folded into the summary; null when nothing is. */
+  compactedThroughSeq: z.number().int().min(-1).nullable(),
+  /** Messages after the summary that the next turn still sends in full. */
+  uncompactedMessages: z.number().int().nonnegative(),
+});
+export type ThreadContext = z.infer<typeof ThreadContextSchema>;
 
 export const VoiceCatalogEntrySchema = z.object({
   id: z.string(),
