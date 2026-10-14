@@ -1,0 +1,76 @@
+# Codemagic CI for Alina's own iOS app (see docs/alina/IOS-BUILD.md).
+#
+# alina-ios-unsigned builds the app for a real iPhone WITHOUT Apple signing and produces
+# Alina-unsigned.ipa. Install it by signing on your own device with a free Apple ID using
+# Sideloadly or AltStore. No paid Apple Developer account is needed for that route.
+#
+# For TestFlight / ad-hoc installs you need a paid Apple Developer account. Add the
+# App Store Connect API key to Codemagic (Teams > Integrations > Developer Portal) and add a
+# signed workflow then; it is deliberately not in this file yet.
+
+workflows:
+  alina-ios-unsigned:
+    name: Alina iOS (unsigned .ipa)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: latest
+      cocoapods: default
+      node: 22
+      vars:
+        # Production-style builds require HTTPS. The server can still be changed on the sign-in screen.
+        EXPO_PUBLIC_API_URL: https://jarvis.affanshaikhsurab.site
+        ALINA_BUNDLE_ID: com.affanshaikhsurab.alina
+        CI: "1"
+        EXPO_NO_TELEMETRY: "1"
+        EXPO_NO_GIT_STATUS: "1"
+    scripts:
+      - name: Install pnpm and workspace dependencies (mobile only)
+        script: |
+          set -euo pipefail
+          npm install -g --force pnpm@9.15.0
+          pnpm --version
+          pnpm install --frozen-lockfile --filter "@rakazo/mobile..."
+      - name: Patch app.json for Alina (own bundle id, no upstream OTA updates)
+        script: |
+          set -euo pipefail
+          cd apps/mobile
+          node scripts/alina-config.mjs
+          node scripts/alina-config.mjs --check
+      - name: Generate the native iOS project (expo prebuild)
+        script: |
+          set -euo pipefail
+          cd apps/mobile
+          pnpm exec expo prebuild --platform ios --clean
+          ls ios
+      - name: Archive without code signing
+        script: |
+          set -euo pipefail
+          cd apps/mobile/ios
+          WORKSPACE="$(ls -d *.xcworkspace | head -1)"
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "workspace=$WORKSPACE scheme=$SCHEME"
+          xcodebuild -version
+          mkdir -p "$CM_BUILD_DIR/build"
+          xcodebuild archive \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$CM_BUILD_DIR/build/Alina.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee "$CM_BUILD_DIR/build/xcodebuild.log" | xcpretty || (tail -n 80 "$CM_BUILD_DIR/build/xcodebuild.log"; exit 1)
+      - name: Package Alina-unsigned.ipa
+        script: |
+          set -euo pipefail
+          APP="$(find "$CM_BUILD_DIR/build/Alina.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          echo "app bundle: $APP"
+          rm -rf "$CM_BUILD_DIR/build/ipa" && mkdir -p "$CM_BUILD_DIR/build/ipa/Payload"
+          cp -R "$APP" "$CM_BUILD_DIR/build/ipa/Payload/"
+          (cd "$CM_BUILD_DIR/build/ipa" && zip -qry "$CM_BUILD_DIR/build/Alina-unsigned.ipa" Payload)
+          ls -lh "$CM_BUILD_DIR/build/Alina-unsigned.ipa"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist"
+    artifacts:
+      - build/Alina-unsigned.ipa
+      - build/xcodebuild.log
