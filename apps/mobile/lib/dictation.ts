@@ -3,6 +3,7 @@
  * reports words, and only a quiet gap measured here ends a turn. The recognizer's own
  * `isFinal` / `end` is a breath or an OS timeout, never the caller finishing a sentence.
  */
+import type { SetCategoryOptions } from "expo-speech-recognition";
 
 /** Quiet gap that ends an utterance. A natural breath is well under it, a finished turn well over. */
 export const ENDPOINT_SILENCE_MS = 1_200;
@@ -19,7 +20,12 @@ type DictationEventMap = { result: ResultEvent; end: null; error: ErrorEvent };
 
 /** The slice of `expo-speech-recognition` this module needs, so tests can drive the events. */
 export type SpeechRecognizer = {
-  start(options: { lang: string; interimResults: boolean; continuous: boolean }): void;
+  start(options: {
+    lang: string;
+    interimResults: boolean;
+    continuous: boolean;
+    iosCategory?: SetCategoryOptions;
+  }): void;
   stop(): void;
   abort(): void;
   isRecognitionAvailable(): boolean;
@@ -33,8 +39,11 @@ export type SpeechRecognizer = {
 type Session = {
   recognizer: SpeechRecognizer;
   lang: string;
+  iosCategory?: SetCategoryOptions;
   onInterim?: (text: string) => void;
   onFinal: (text: string) => void;
+  onIdle?: () => void;
+  onError?: (code: string) => void;
   subs: { remove: () => void }[];
   /** Text from earlier recognizer sessions of the same utterance. */
   carried: string;
@@ -92,8 +101,14 @@ export function stop(): void {
 export async function listen(opts: {
   onInterim?: (text: string) => void;
   onFinal: (text: string) => void;
+  /** The session gave up without hearing anything, so the caller can open a fresh one. */
+  onIdle?: () => void;
+  /** The session hit an error it cannot recover from, before hearing anything. */
+  onError?: (code: string) => void;
   signal?: AbortSignal;
   lang?: string;
+  /** iOS: the audio session each recognizer start applies, instead of its loudspeaker default. */
+  iosCategory?: SetCategoryOptions;
 }): Promise<void> {
   stop();
   const mine = token;
@@ -104,8 +119,11 @@ export async function listen(opts: {
   const session: Session = {
     recognizer,
     lang: opts.lang || "en-US",
+    iosCategory: opts.iosCategory,
     onInterim: opts.onInterim,
     onFinal: opts.onFinal,
+    onIdle: opts.onIdle,
+    onError: opts.onError,
     subs: [],
     carried: "",
     heard: "",
@@ -130,7 +148,12 @@ export async function listen(opts: {
 
 function start(session: Session): void {
   if (active !== session) return;
-  session.recognizer.start({ lang: session.lang, interimResults: true, continuous: true });
+  session.recognizer.start({
+    lang: session.lang,
+    interimResults: true,
+    continuous: true,
+    ...(session.iosCategory ? { iosCategory: session.iosCategory } : {}),
+  });
 }
 
 function onResult(session: Session, event: ResultEvent): void {
@@ -184,15 +207,19 @@ function onEnd(session: Session): void {
 function onError(session: Session, event: ErrorEvent): void {
   if (active !== session) return;
   if (!event?.error || !FATAL_ERRORS.has(event.error)) return;
-  finish(session);
+  finish(session, event.error);
 }
 
-function finish(session: Session): void {
+function finish(session: Session, error?: string): void {
   if (active !== session) return;
   const text = join(session.carried, session.heard).trim();
-  const { onFinal } = session;
+  const { onFinal, onIdle, onError } = session;
   stop();
   if (text) onFinal(text);
+  // Ending in silence used to leave the caller's microphone looking open with nothing
+  // listening, so the call went deaf. Say so, and let the caller decide what comes next.
+  else if (error) onError?.(error);
+  else onIdle?.();
 }
 
 function join(left: string, right: string): string {

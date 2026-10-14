@@ -2,13 +2,20 @@ import { useKeepAwake } from "expo-keep-awake";
 import { useRouter } from "expo-router";
 import type { ComponentProps } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MobileMe } from "../lib/api";
 import { rpc } from "../lib/api";
-import type { CallPhase } from "../lib/call-session";
-import { endCall, toggleMute, toggleTranscript, useCallSession } from "../lib/call-session";
+import type { CallPhase, CallState } from "../lib/call-session";
+import {
+  endCall,
+  toggleMute,
+  toggleSpeaker,
+  toggleTranscript,
+  useCallSession,
+} from "../lib/call-session";
+import { callTranscript } from "../lib/call-transcript";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 import { BotAvatar } from "./bot-avatar";
@@ -17,7 +24,6 @@ import { GlassSurface } from "./glass-surface";
 import type { NativeSymbol } from "./native-symbol";
 
 const BARS = [9, 15, 21, 15, 9];
-const TRANSCRIPT_LINES = 4;
 
 let cachedInitial: string | null = null;
 
@@ -102,6 +108,15 @@ export function CallCard() {
           onPress={toggleTranscript}
         />
         <RoundButton
+          label={t("Speaker")}
+          ios={call.speaker ? "speaker.wave.2.fill" : "speaker.wave.2"}
+          android="volume-high-outline"
+          selected={call.speaker}
+          color={tokens.foreground}
+          border={tokens.border}
+          onPress={toggleSpeaker}
+        />
+        <RoundButton
           label={call.muted ? t("Unmute") : t("Mute")}
           ios={call.muted ? "mic.slash" : "mic"}
           android={call.muted ? "mic-off-outline" : "mic-outline"}
@@ -120,28 +135,49 @@ export function CallCard() {
           onPress={endCall}
         />
       </View>
-      {call.transcriptOpen ? (
-        <View style={[styles.transcript, { borderTopColor: tokens.border }]}>
-          {call.exchanges.slice(-TRANSCRIPT_LINES).map((exchange, index) => (
+      {call.transcriptOpen ? <CallTranscript call={call} /> : null}
+    </GlassSurface>
+  );
+}
+
+/** Both sides in order, newest at the bottom: the bot on the left, the caller on the right. */
+function CallTranscript({ call }: { call: CallState }) {
+  const tokens = useMobileTokens();
+  const reduceMotion = useReducedMotion();
+  const scroll = useRef<ScrollView>(null);
+  const lines = callTranscript(call);
+  return (
+    <View style={[styles.transcript, { borderTopColor: tokens.border }]}>
+      {lines.length > 0 ? (
+        <ScrollView
+          ref={scroll}
+          style={styles.transcriptScroll}
+          contentContainerStyle={styles.transcriptLines}
+          onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: !reduceMotion })}
+        >
+          {lines.map((line) => (
             <Text
-              key={`${exchange.role}-${index + 1}-${exchange.text.slice(0, 24)}`}
-              numberOfLines={1}
+              key={line.key}
               style={[
                 styles.line,
-                { color: exchange.role === "bot" ? tokens.foreground : tokens.mutedForeground },
+                line.role === "user" ? styles.userLine : styles.botLine,
+                {
+                  color:
+                    line.role === "bot" && !line.pending
+                      ? tokens.foreground
+                      : tokens.mutedForeground,
+                },
               ]}
             >
-              {exchange.text}
+              {line.text}
             </Text>
           ))}
-          {call.caption || call.heard ? (
-            <Text numberOfLines={1} style={[styles.line, { color: tokens.mutedForeground }]}>
-              {call.caption || call.heard}
-            </Text>
-          ) : null}
-        </View>
+        </ScrollView>
       ) : null}
-    </GlassSurface>
+      {call.caption ? (
+        <Text style={[styles.line, { color: tokens.mutedForeground }]}>{call.caption}</Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -263,5 +299,9 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", justifyContent: "center", gap: 12, marginTop: 12 },
   buttonFallback: { borderWidth: StyleSheet.hairlineWidth },
   transcript: { marginTop: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, gap: 5 },
-  line: { fontSize: 13, writingDirection: "auto" },
+  transcriptScroll: { maxHeight: 220 },
+  transcriptLines: { gap: 8 },
+  line: { fontSize: 13, lineHeight: 18, writingDirection: "auto" },
+  botLine: { alignSelf: "flex-start", maxWidth: "88%" },
+  userLine: { alignSelf: "flex-end", maxWidth: "88%", textAlign: "right" },
 });

@@ -132,4 +132,58 @@ describe("mobile dictation", () => {
     fake.fail("not-allowed");
     expect(onFinal).toHaveBeenCalledWith("open the door");
   });
+
+  it("starts every recognizer session in the call's audio session", async () => {
+    const iosCategory = {
+      category: "playAndRecord" as const,
+      categoryOptions: ["allowBluetooth" as const],
+      mode: "voiceChat" as const,
+    };
+    await listen({ onFinal: vi.fn(), iosCategory });
+    expect(fake.start).toHaveBeenLastCalledWith({
+      lang: "en-US",
+      interimResults: true,
+      continuous: true,
+      iosCategory,
+    });
+
+    fake.end();
+    vi.advanceTimersByTime(250);
+    expect(fake.start).toHaveBeenCalledTimes(2);
+    expect(fake.start).toHaveBeenLastCalledWith(expect.objectContaining({ iosCategory }));
+  });
+
+  it("says it went idle when restarts hear nothing at all, instead of going silent", async () => {
+    const onFinal = vi.fn();
+    const onIdle = vi.fn();
+    await listen({ onFinal, onIdle });
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      fake.end();
+      vi.advanceTimersByTime(RESTART_CAP_MS);
+    }
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(onIdle).toHaveBeenCalledOnce();
+    expect(fake.abort).toHaveBeenCalled();
+  });
+
+  it("reports a fatal error that arrives before any words", async () => {
+    const onFinal = vi.fn();
+    const onIdle = vi.fn();
+    const onError = vi.fn();
+    await listen({ onFinal, onIdle, onError });
+    fake.fail("audio-capture");
+    expect(onError).toHaveBeenCalledWith("audio-capture");
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(onIdle).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet about an aborted session", async () => {
+    const onIdle = vi.fn();
+    const controller = new AbortController();
+    await listen({ onFinal: vi.fn(), onIdle, signal: controller.signal });
+    controller.abort();
+    fake.end();
+    vi.advanceTimersByTime(10_000);
+    expect(onIdle).not.toHaveBeenCalled();
+  });
 });

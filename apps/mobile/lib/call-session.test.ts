@@ -8,8 +8,24 @@ import {
   startCall,
   subscribe,
   toggleMute,
+  toggleSpeaker,
+  toggleTranscript,
 } from "./call-session";
 
+const secureStore = vi.hoisted(() => ({
+  getItemAsync: vi.fn(async (_key: string): Promise<string | null> => null),
+  setItemAsync: vi.fn(async (_key: string, _value: string) => undefined),
+  deleteItemAsync: vi.fn(async (_key: string) => undefined),
+}));
+
+vi.mock("expo-secure-store", () => secureStore);
+vi.mock("./call-audio", () => ({
+  beginCallAudio: vi.fn(async () => undefined),
+  callRecognizerCategory: vi.fn(() => undefined),
+  endCallAudio: vi.fn(async () => undefined),
+  reassertCallAudio: vi.fn(async () => undefined),
+  setCallSpeaker: vi.fn(async () => undefined),
+}));
 vi.mock("expo-file-system", () => ({ File: class {}, Paths: {} }));
 vi.mock("./voice", () => ({ speakText: vi.fn(), stopSpeaking: vi.fn() }));
 vi.mock("./call-sounds", () => ({ playCallCue: vi.fn() }));
@@ -52,7 +68,21 @@ function fakes(opts: { onDevice?: boolean; pinned?: string } = {}) {
   const closeCall = vi.fn(async (_botId: string, _callId: string) => undefined);
   const unwatch = vi.fn();
   let reply: (messageId: string, text: string, runId?: string) => void = () => undefined;
+  let draft: (messageId: string, text: string, runId?: string) => void = () => undefined;
   let ended: (ended: CallEnded) => void = () => undefined;
+  /** The audio session calls and the cues, in the order they happened. */
+  const order: string[] = [];
+  const audio = {
+    begin: vi.fn(async () => {
+      order.push("audio:begin");
+    }),
+    speaker: vi.fn(async (on: boolean) => {
+      order.push(`audio:speaker:${on}`);
+    }),
+    end: vi.fn(async () => {
+      order.push("audio:end");
+    }),
+  };
   const spoken: string[] = [];
   let handlers: DictationHandlers | null = null;
   const stopSpeaking = vi.fn(() => {
@@ -61,8 +91,10 @@ function fakes(opts: { onDevice?: boolean; pinned?: string } = {}) {
   const cues: string[] = [];
   const waits: string[] = [];
   const deps: CallDeps = {
+    audio,
     cue: async (cue) => {
       cues.push(cue);
+      order.push(`cue:${cue}`);
     },
     waitSound: (action) => {
       waits.push(action);
@@ -90,19 +122,25 @@ function fakes(opts: { onDevice?: boolean; pinned?: string } = {}) {
       speeches.push(next);
       return next.promise;
     },
-    watch: (_botId, onReply, onCallEnded) => {
+    watch: (_botId, onReply, onCallEnded, onDraft) => {
       reply = onReply;
       ended = onCallEnded;
+      draft = onDraft ?? (() => undefined);
       return unwatch;
     },
   };
   return {
     deps,
+    audio,
+    order,
     cues,
     waits,
     stopSpeaking,
     interim: (text: string) => handlers?.onInterim(text),
     hear: (text: string) => handlers?.onFinal(text),
+    idle: () => handlers?.onIdle?.(),
+    fail: (code: string) => handlers?.onError?.(code),
+    draftWith: (messageId: string, text: string, runId?: string) => draft(messageId, text, runId),
     recordings,
     signals,
     speeches,
@@ -894,6 +932,185 @@ describe("mobile call session", () => {
 
     expect(fake.recordings).toHaveLength(0);
     expect(fake.send).toHaveBeenCalledOnce();
+  });
+
+  it("holds the call's audio session from before the opening cue until hang-up", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    expect(fake.order).toEqual(["audio:begin", "cue:start"]);
+
+    fake.say("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    fake.speeches[0]?.resolve();
+    await flush();
+    // Turns and replies never touch the session again.
+    expect(fake.audio.begin).toHaveBeenCalledOnce();
+    expect(fake.audio.end).not.toHaveBeenCalled();
+
+    endCall();
+    expect(fake.audio.end).toHaveBeenCalledOnce();
+  });
+
+  it("releases the audio session when the bot hangs up", async () => {
+    const fake = fakes();
+    const id = startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.endedCall(id);
+    expect(getSnapshot()).toBeNull();
+    expect(fake.audio.end).toHaveBeenCalledOnce();
+  });
+
+  it("does not open the microphone for a call hung up while its audio was starting", async () => {
+    const fake = fakes();
+    const begun = deferred<void>();
+    startCall(
+      { botId: "bot-1", botName: "Ada" },
+      { ...fake.deps, audio: { ...fake.audio, begin: () => begun.promise } },
+    );
+    endCall();
+    begun.resolve();
+    await flush();
+    expect(fake.cues).toEqual([]);
+    expect(fake.recordings).toHaveLength(0);
+  });
+
+  it("switches between the earpiece and the speaker without interrupting the turn", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    expect(getSnapshot()?.speaker).toBe(false);
+
+    toggleSpeaker();
+    expect(getSnapshot()?.speaker).toBe(true);
+    expect(fake.audio.speaker).toHaveBeenLastCalledWith(true);
+    toggleSpeaker();
+    expect(getSnapshot()?.speaker).toBe(false);
+    expect(fake.audio.speaker).toHaveBeenLastCalledWith(false);
+
+    expect(fake.recordings).toHaveLength(1);
+    expect(fake.signals[fake.signals.length - 1]?.aborted).toBe(false);
+  });
+
+  it("reopens the microphone when the recognizer gives up on a quiet stretch", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    expect(fake.signals).toHaveLength(1);
+
+    fake.idle();
+    await flush();
+    expect(fake.signals).toHaveLength(2);
+    expect(getSnapshot()?.phase).toBe("listening");
+
+    fake.hear("status please");
+    await flush();
+    expect(fake.send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps watching a reply for a cut-in after the recognizer goes quiet", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.hear("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green, and the tests pass.");
+    await flush();
+    const opened = fake.signals.length;
+
+    fake.idle();
+    await flush();
+    expect(fake.signals).toHaveLength(opened + 1);
+    expect(getSnapshot()?.phase).toBe("speaking");
+  });
+
+  it("does not reopen a muted microphone when the recognizer goes quiet", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    const handlersBeforeMute = fake.signals.length;
+    toggleMute();
+    fake.idle();
+    await flush();
+    expect(fake.signals).toHaveLength(handlersBeforeMute);
+  });
+
+  it("retries a turn the recognizer cannot hear, then hangs up", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+
+    const captions: string[] = [];
+    const stop = subscribe(() => {
+      const caption = getSnapshot()?.caption;
+      if (caption) captions.push(caption);
+    });
+    fake.fail("audio-capture");
+    await flush();
+    stop();
+    expect(captions).toContain("Could not hear that.");
+    expect(getSnapshot()?.phase).toBe("listening");
+    expect(fake.signals).toHaveLength(2);
+    fake.fail("audio-capture");
+    await flush();
+    fake.fail("audio-capture");
+    await flush();
+    expect(getSnapshot()).toBeNull();
+  });
+
+  it("lets a reply play out when the recognizer fails over it", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.hear("status please");
+    await flush();
+    fake.replyWith("message-1", "It is green.");
+    await flush();
+
+    fake.fail("audio-capture");
+    await flush();
+    expect(getSnapshot()).toMatchObject({ phase: "speaking", caption: "" });
+    expect(fake.stopSpeaking).not.toHaveBeenCalled();
+  });
+
+  it("shows the reply forming in the transcript, then speaks it", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    fake.say("status please");
+    await flush();
+
+    fake.draftWith("message-1", "It is", "run-1");
+    expect(getSnapshot()).toMatchObject({ phase: "thinking", draft: "It is" });
+    fake.draftWith("message-typed", "Unrelated", "run-typed");
+    expect(getSnapshot()?.draft).toBe("It is");
+
+    fake.replyWith("message-1", "It is green.", "run-1");
+    expect(getSnapshot()).toMatchObject({ phase: "speaking", draft: "" });
+    expect(getSnapshot()?.exchanges).toEqual([
+      { role: "user", text: "status please" },
+      { role: "bot", text: "It is green." },
+    ]);
+
+    // A late draft of the reply already spoken changes nothing.
+    fake.draftWith("message-1", "It is green.", "run-1");
+    expect(getSnapshot()?.draft).toBe("");
+  });
+
+  it("opens the transcript the way the caller left it, and remembers the choice", async () => {
+    secureStore.getItemAsync.mockResolvedValueOnce("1");
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    expect(getSnapshot()?.transcriptOpen).toBe(false);
+    await flush();
+    expect(getSnapshot()?.transcriptOpen).toBe(true);
+
+    toggleTranscript();
+    expect(getSnapshot()?.transcriptOpen).toBe(false);
+    expect(secureStore.deleteItemAsync).toHaveBeenCalledWith("rakazo.call-transcript");
+    toggleTranscript();
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith("rakazo.call-transcript", "1");
   });
 });
 

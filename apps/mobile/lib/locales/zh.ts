@@ -687,6 +687,7 @@ export const ZH_MESSAGES: Record<string, string> = {
   Call: "通话",
   Settings: "设置",
   Transcript: "字幕",
+  Speaker: "扬声器",
   Mute: "静音",
   Unmute: "取消静音",
   "Hang up": "挂断",
