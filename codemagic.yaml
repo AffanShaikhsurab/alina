@@ -28,7 +28,7 @@ workflows:
       - name: Install pnpm and workspace dependencies (mobile only)
         script: |
           set -euo pipefail
-          npm install -g pnpm@9.15.0
+          npm install -g --force pnpm@9.15.0
           pnpm --version
           pnpm install --frozen-lockfile --filter "@rakazo/mobile..."
       - name: Patch app.json for Alina (own bundle id, no upstream OTA updates)
