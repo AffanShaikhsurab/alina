@@ -736,6 +736,7 @@ export const DE_MESSAGES: Record<string, string> = {
   Settings: "Einstellungen",
   "Show transcript": "Transkript anzeigen",
   Transcript: "Transkript",
+  Speaker: "Lautsprecher",
   Unmute: "Stummschaltung aufheben",
   "Voice chat": "Sprachchat",
   "Call sounds": "Anruftöne",

@@ -6,8 +6,8 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CallCard } from "../components/CallCard";
-import type { CallDeps } from "./call-session";
-import { endCall, startCall } from "./call-session";
+import type { CallDeps, DictationHandlers } from "./call-session";
+import { endCall, startCall, toggleTranscript } from "./call-session";
 
 const { activeTags, useKeepAwake } = vi.hoisted(() => ({
   activeTags: new Set<string>(),
@@ -47,10 +47,23 @@ vi.mock("react-native", () => {
       timing: vi.fn(),
       delay: vi.fn(),
     },
+    ScrollView: View,
     Platform: { OS: "ios", Version: 18 },
     StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1 },
   };
 });
+vi.mock("expo-secure-store", () => ({
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined),
+  deleteItemAsync: vi.fn(async () => undefined),
+}));
+vi.mock("./call-audio", () => ({
+  beginCallAudio: vi.fn(async () => undefined),
+  callRecognizerCategory: vi.fn(() => undefined),
+  endCallAudio: vi.fn(async () => undefined),
+  reassertCallAudio: vi.fn(async () => undefined),
+  setCallSpeaker: vi.fn(async () => undefined),
+}));
 vi.mock("../components/glass-icon-button", () => ({ GlassIconButton: () => null }));
 vi.mock("./api", () => ({
   rpc: vi.fn().mockResolvedValue({ name: "Test" }),
@@ -137,5 +150,49 @@ describe("CallCard keep-awake lifetime", () => {
     await act(async () => endCall());
     expect(container.childElementCount).toBe(0);
     expect(activeTags.has("rakazo-call")).toBe(false);
+  });
+
+  it("shows both sides of the call in order, with the caller's words as they come", async () => {
+    const mic: { handlers?: DictationHandlers } = {};
+    let reply: (messageId: string, text: string, runId?: string) => void = () => undefined;
+    const deps: CallDeps = {
+      dictate: async (handlers) => {
+        mic.handlers = handlers;
+        return true;
+      },
+      record: vi.fn(),
+      transcribe: vi.fn(),
+      send: async () => "run-1",
+      endCall: async () => undefined,
+      // The reply keeps playing for the whole test.
+      speak: () => new Promise<void>(() => undefined),
+      watch: (_botId, onReply) => {
+        reply = onReply;
+        return vi.fn();
+      },
+      stopSpeaking: vi.fn(),
+      cue: async () => undefined,
+      waitSound: vi.fn(),
+    };
+    act(() => root.render(<CallCard />));
+    await act(async () => {
+      startCall({ botId: "bot-1", botName: "Ada" }, deps);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    act(() => toggleTranscript());
+    expect(mic.handlers).toBeDefined();
+
+    await act(async () => mic.handlers?.onInterim("how is the"));
+    expect(container.textContent).toContain("how is the");
+
+    await act(async () => {
+      mic.handlers?.onFinal("how is the deploy going");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => reply("message-1", "It is green.", "run-1"));
+
+    const text = container.textContent ?? "";
+    expect(text.indexOf("how is the deploy going")).toBeGreaterThan(-1);
+    expect(text.indexOf("It is green.")).toBeGreaterThan(text.indexOf("how is the deploy going"));
   });
 });

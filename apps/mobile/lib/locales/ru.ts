@@ -709,6 +709,7 @@ export const RU_MESSAGES: Record<string, string> = {
   Call: "Позвонить",
   Settings: "Настройки",
   Transcript: "Расшифровка",
+  Speaker: "Динамик",
   Mute: "Выключить микрофон",
   Unmute: "Включить микрофон",
   "Hang up": "Завершить",
