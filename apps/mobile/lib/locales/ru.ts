@@ -807,4 +807,9 @@ export const RU_MESSAGES: Record<string, string> = {
   "Now using {model}": "Теперь используется {model}",
   "Compacting…": "Сжатие…",
   "Context compacted": "Контекст сжат",
+  "Minimise call": "Свернуть звонок",
+  "Call settings": "Настройки звонка",
+  "End call": "Завершить звонок",
+  iPhone: "iPhone",
+  Phone: "Телефон",
 };

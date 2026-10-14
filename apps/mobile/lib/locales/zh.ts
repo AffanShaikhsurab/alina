@@ -782,4 +782,9 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Now using {model}": "正在使用 {model}",
   "Compacting…": "正在压缩…",
   "Context compacted": "上下文已压缩",
+  "Minimise call": "最小化通话",
+  "Call settings": "通话设置",
+  "End call": "结束通话",
+  iPhone: "iPhone",
+  Phone: "电话",
 };

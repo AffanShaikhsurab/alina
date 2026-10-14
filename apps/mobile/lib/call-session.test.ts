@@ -4,7 +4,9 @@ import type { CallClip, CallDeps, CallEnded, DictationHandlers } from "./call-se
 import {
   endCall,
   getSnapshot,
+  setCallMinimized,
   setCallProviderTranscribe,
+  setSpeaker,
   startCall,
   subscribe,
   toggleMute,
@@ -1098,19 +1100,83 @@ describe("mobile call session", () => {
     expect(getSnapshot()?.draft).toBe("");
   });
 
-  it("opens the transcript the way the caller left it, and remembers the choice", async () => {
-    secureStore.getItemAsync.mockResolvedValueOnce("1");
+  it("shows the transcript unless the caller hid it last time, and remembers the choice", async () => {
+    secureStore.getItemAsync.mockResolvedValueOnce("0");
     const fake = fakes();
     startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
-    expect(getSnapshot()?.transcriptOpen).toBe(false);
-    await flush();
     expect(getSnapshot()?.transcriptOpen).toBe(true);
+    await flush();
+    expect(getSnapshot()?.transcriptOpen).toBe(false);
 
     toggleTranscript();
-    expect(getSnapshot()?.transcriptOpen).toBe(false);
+    expect(getSnapshot()?.transcriptOpen).toBe(true);
     expect(secureStore.deleteItemAsync).toHaveBeenCalledWith("rakazo.call-transcript");
     toggleTranscript();
-    expect(secureStore.setItemAsync).toHaveBeenCalledWith("rakazo.call-transcript", "1");
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith("rakazo.call-transcript", "0");
+  });
+
+  it("does not listen over a reply or after it while muted, and listens again on unmute", async () => {
+    const fake = fakes({ onDevice: true });
+    startCall({ botId: "bot-1", botName: "Ada", transcribe: false }, fake.deps);
+    await flush();
+    fake.hear("what's new");
+    await flush();
+    fake.replyWith("message-1", "Two things.", "run-1");
+    await flush();
+    // The device listens over the reply so the caller can cut in.
+    const listening = fake.signals.length;
+    expect(fake.signals.at(-1)?.aborted).toBe(false);
+
+    toggleMute();
+    expect(fake.signals.at(-1)?.aborted).toBe(true);
+    // Words heard while muted never cut the reply off or become a turn.
+    fake.interim("wait stop");
+    fake.hear("wait stop");
+    await flush();
+    expect(fake.stopSpeaking).not.toHaveBeenCalled();
+    expect(fake.send).toHaveBeenCalledTimes(1);
+
+    fake.speeches.at(-1)?.resolve();
+    await flush();
+    expect(getSnapshot()).toMatchObject({ phase: "listening", muted: true });
+    expect(fake.signals).toHaveLength(listening);
+
+    toggleMute();
+    await flush();
+    expect(fake.signals).toHaveLength(listening + 1);
+    expect(fake.signals.at(-1)?.aborted).toBe(false);
+  });
+
+  it("sets the audio output directly and ignores a repeat of the current choice", async () => {
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    setSpeaker(false);
+    expect(fake.audio.speaker).not.toHaveBeenCalled();
+    setSpeaker(true);
+    setSpeaker(true);
+    expect(fake.audio.speaker).toHaveBeenCalledTimes(1);
+    expect(getSnapshot()?.speaker).toBe(true);
+    setSpeaker(false);
+    expect(fake.audio.speaker).toHaveBeenLastCalledWith(false);
+  });
+
+  it("stamps the start time and minimises without touching the call", async () => {
+    const before = Date.now();
+    const fake = fakes();
+    startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
+    await flush();
+    const started = getSnapshot();
+    expect(started?.startedAt).toBeGreaterThanOrEqual(before);
+    expect(started?.minimized).toBe(false);
+
+    setCallMinimized(true);
+    expect(getSnapshot()).toMatchObject({ minimized: true, phase: "listening" });
+    expect(fake.signals.at(-1)?.aborted).toBe(false);
+    expect(fake.closeCall).not.toHaveBeenCalled();
+    setCallMinimized(false);
+    expect(getSnapshot()?.minimized).toBe(false);
+    expect(getSnapshot()?.startedAt).toBe(started?.startedAt);
   });
 });
 

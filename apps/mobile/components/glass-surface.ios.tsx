@@ -10,11 +10,13 @@ export function GlassSurface({
   shape = "capsule",
   cornerRadius = 22,
   tint,
+  colorScheme,
   style,
   fallbackStyle,
   children,
 }: GlassSurfaceProps) {
-  const scheme = useResolvedAppearance();
+  const appScheme = useResolvedAppearance();
+  const scheme = colorScheme ?? appScheme;
   if (!iosAtLeast(26)) return <View style={[style, fallbackStyle]}>{children}</View>;
   const modifiers = [
     foregroundStyle("#00000000"),

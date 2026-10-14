@@ -54,6 +54,10 @@ export type CallState = {
   /** Loudspeaker instead of the earpiece. Headsets and Bluetooth win either way. */
   speaker: boolean;
   transcriptOpen: boolean;
+  /** When the call was placed (ms since epoch), for the elapsed timer. */
+  startedAt: number;
+  /** Folded into a pill over the chat; the call keeps running. */
+  minimized: boolean;
   caption: string;
   heard: string;
   /** The reply the bot is still writing, shown in the transcript before it is spoken. */
@@ -241,7 +245,9 @@ export function startCall(
     phase: "listening",
     muted: false,
     speaker: false,
-    transcriptOpen: false,
+    transcriptOpen: true,
+    startedAt: Date.now(),
+    minimized: false,
     caption: "",
     heard: "",
     draft: "",
@@ -250,10 +256,10 @@ export function startCall(
   unwatch = deps.watch(call.botId, onReply, onCallEnded, onDraft);
   emit();
   const startedCallId = callId;
-  // The transcript opens the way the caller left it on their last call.
+  // The transcript shows unless the caller hid it on an earlier call.
   void loadTranscriptOpen()
     .then((open) => {
-      if (open && state && callId === startedCallId) set({ transcriptOpen: true });
+      if (!open && state && callId === startedCallId) set({ transcriptOpen: false });
     })
     .catch(() => undefined);
   void openCall(callId, pinned, call.greeting);
@@ -361,11 +367,20 @@ export function toggleTranscript(): void {
 }
 
 /** Moves the call between the earpiece and the loudspeaker, without touching the turn. */
-export function toggleSpeaker(): void {
-  if (!state) return;
-  const speaker = !state.speaker;
+export function setSpeaker(speaker: boolean): void {
+  if (!state || state.speaker === speaker) return;
   set({ speaker });
   void deps.audio?.speaker(speaker).catch(() => undefined);
+}
+
+export function toggleSpeaker(): void {
+  if (state) setSpeaker(!state.speaker);
+}
+
+/** Folds the call into a pill over the chat, or opens it full screen again. */
+export function setCallMinimized(minimized: boolean): void {
+  if (!state || state.minimized === minimized) return;
+  set({ minimized });
 }
 
 async function listen(): Promise<void> {

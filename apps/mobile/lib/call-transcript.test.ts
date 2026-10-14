@@ -5,6 +5,7 @@ import {
   callTranscript,
   loadTranscriptOpen,
   saveTranscriptOpen,
+  transcriptLineLayout,
 } from "./call-transcript";
 
 vi.mock("expo-secure-store", () => ({
@@ -34,11 +35,27 @@ describe("call transcript", () => {
       draft: "",
     });
     expect(lines.at(-1)).toEqual({
-      key: "heard",
+      key: "turn-3",
       role: "user",
       text: "and the tests",
       pending: true,
     });
+  });
+
+  it("keeps a forming line's key once it becomes the turn, so it does not redraw", () => {
+    const live = callTranscript({ phase: "listening", exchanges, heard: "and tests", draft: "" });
+    const sent = callTranscript({
+      phase: "thinking",
+      exchanges: [...exchanges, { role: "user", text: "and tests" }],
+      heard: "and tests",
+      draft: "",
+    });
+    expect(live.at(-1)?.key).toBe(sent.at(-1)?.key);
+  });
+
+  it("puts the bot on the leading edge in primary text and the caller trailing in grey", () => {
+    expect(transcriptLineLayout({ role: "bot" })).toEqual({ align: "start", tone: "primary" });
+    expect(transcriptLineLayout({ role: "user" })).toEqual({ align: "end", tone: "secondary" });
   });
 
   it("does not repeat a sent turn as a live line", () => {
@@ -58,7 +75,7 @@ describe("call transcript", () => {
       heard: "how is the deploy going",
       draft: "It is",
     });
-    expect(thinking.at(-1)).toEqual({ key: "draft", role: "bot", text: "It is", pending: true });
+    expect(thinking.at(-1)).toEqual({ key: "turn-2", role: "bot", text: "It is", pending: true });
 
     const speaking = callTranscript({ phase: "speaking", exchanges, heard: "", draft: "It is" });
     expect(speaking.map((line) => line.key)).toEqual(["turn-1", "turn-2"]);
@@ -72,17 +89,19 @@ describe("transcript preference", () => {
     vi.mocked(SecureStore.deleteItemAsync).mockClear();
   });
 
-  it("starts closed until the caller opens it", async () => {
+  it("shows by default, and for callers who opened it on the old card", async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
-    await expect(loadTranscriptOpen()).resolves.toBe(false);
+    await expect(loadTranscriptOpen()).resolves.toBe(true);
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue("1");
     await expect(loadTranscriptOpen()).resolves.toBe(true);
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("0");
+    await expect(loadTranscriptOpen()).resolves.toBe(false);
   });
 
-  it("remembers opening and forgets closing", async () => {
-    await saveTranscriptOpen(true);
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(CALL_TRANSCRIPT_KEY, "1");
+  it("remembers hiding and forgets showing", async () => {
     await saveTranscriptOpen(false);
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(CALL_TRANSCRIPT_KEY, "0");
+    await saveTranscriptOpen(true);
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith(CALL_TRANSCRIPT_KEY);
   });
 });

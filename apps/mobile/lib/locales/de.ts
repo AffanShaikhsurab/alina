@@ -804,4 +804,9 @@ export const DE_MESSAGES: Record<string, string> = {
   "Now using {model}": "Jetzt mit {model}",
   "Compacting…": "Wird komprimiert …",
   "Context compacted": "Kontext komprimiert",
+  "Minimise call": "Anruf minimieren",
+  "Call settings": "Anrufeinstellungen",
+  "End call": "Anruf beenden",
+  iPhone: "iPhone",
+  Phone: "Telefon",
 };
