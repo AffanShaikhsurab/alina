@@ -768,4 +768,12 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Send deletion code": "发送删除验证码",
   "Sign in to your existing account to link SSO": "请登录现有账户以关联 SSO",
   "SSO is temporarily unavailable. Try again.": "SSO 暂时不可用，请重试。",
+  "Model and context": "模型与上下文",
+  Context: "上下文",
+  "{used} of {total}": "{used} / {total}",
+  Compact: "压缩",
+  "Updates after the next reply": "下次回复后更新",
+  "Nothing new to compact": "没有可压缩的新内容",
+  "Could not compact. Try again.": "压缩失败，请重试。",
+  "Could not save model": "无法保存模型",
 };

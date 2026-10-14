@@ -237,6 +237,16 @@ export default function Layout() {
                       name="bot-settings"
                       options={glassHeaderOptions(t("Chat settings"))}
                     />
+                    <Stack.Screen
+                      name="bot-model"
+                      options={{
+                        title: t("Model and context"),
+                        presentation: "formSheet",
+                        sheetAllowedDetents: [0.55, 1],
+                        sheetGrabberVisible: true,
+                        contentStyle: { backgroundColor: native.groupedPage },
+                      }}
+                    />
                     <Stack.Screen name="thread" options={{ title: t("Thread") }} />
                     <Stack.Screen name="routine" options={glassHeaderOptions(t("Routine"))} />
                     <Stack.Screen name="computer" options={{ title: t("Computer") }} />

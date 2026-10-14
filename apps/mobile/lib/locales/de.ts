@@ -790,4 +790,12 @@ export const DE_MESSAGES: Record<string, string> = {
     "Melde dich bei deinem bestehenden Konto an, um SSO zu verknüpfen",
   "SSO is temporarily unavailable. Try again.":
     "SSO ist vorübergehend nicht verfügbar. Versuche es erneut.",
+  "Model and context": "Modell und Kontext",
+  Context: "Kontext",
+  "{used} of {total}": "{used} von {total}",
+  Compact: "Komprimieren",
+  "Updates after the next reply": "Wird nach der nächsten Antwort aktualisiert",
+  "Nothing new to compact": "Nichts Neues zum Komprimieren",
+  "Could not compact. Try again.": "Komprimieren fehlgeschlagen. Versuche es erneut.",
+  "Could not save model": "Modell konnte nicht gespeichert werden",
 };

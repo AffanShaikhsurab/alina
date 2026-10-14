@@ -4,7 +4,7 @@ import type {
   JobPublisher,
   SemanticMemoryResponse,
 } from "@rakazo/adapter-kit";
-import { historyCompactJob } from "@rakazo/adapter-kit";
+import { historyCompactJob, manualHistoryCompactJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { createLogger, createTestSink, installLogger, wrapJobPayload } from "@rakazo/logging";
@@ -17,6 +17,7 @@ import {
   MAX_COMPACTED_SUMMARY_CHARS,
   MAX_SUMMARIZE_PROMPT_CHARS,
   MAX_TRANSCRIPT_CHARS,
+  manualCompactionFloor,
   nextCompactionBatchRange,
   recordHistoryCompactAttemptsExhausted,
   SUMMARIZE_TIMEOUT_BASE_CHARS,
@@ -309,10 +310,11 @@ function compactionHarness(
           orderBy?: { seq: "asc" | "desc" };
           take?: number;
         }) => {
-          const matching =
-            args.where.seq.lte !== undefined
-              ? messages.filter((message) => message.seq <= args.where.seq.lte!)
-              : messages.filter((message) => message.seq > args.where.seq.gt!);
+          const { gt, lte } = args.where.seq;
+          const matching = messages.filter(
+            (message) =>
+              (gt === undefined || message.seq > gt) && (lte === undefined || message.seq <= lte),
+          );
           const ordered = [...matching].sort((left, right) => left.seq - right.seq);
           if (args.orderBy?.seq === "desc") ordered.reverse();
           return ordered.slice(0, args.take ?? ordered.length);
@@ -1007,6 +1009,61 @@ describe("compactHistory", () => {
     await compactHistory(harness.deps, "thread-1");
 
     expect(harness.jobs.enqueue).toHaveBeenCalledWith(historyCompactJob("thread-1"));
+  });
+
+  it("stops a requested compaction at its target and keeps going until it gets there", async () => {
+    const messages = Array.from({ length: 120 }, (_, seq) => ({
+      seq,
+      role: seq % 2 === 0 ? "user" : "bot",
+      blocks: [{ kind: "text" as const, text: `message ${seq}` }],
+    }));
+    const harness = compactionHarness({ deploymentModelKey: "openrouter-key", messages });
+
+    await compactHistory(harness.deps, "thread-1", { throughSeq: 69 });
+
+    expect(harness.thread.historyCompactedUpToSeq).toBe(49);
+    expect(harness.jobs.enqueue).toHaveBeenCalledWith(manualHistoryCompactJob("thread-1", 69));
+
+    harness.jobs.enqueue.mockClear();
+    await compactHistory(harness.deps, "thread-1", { throughSeq: 69 });
+
+    // Messages after the target stay verbatim, and the request ends once it is reached.
+    expect(harness.thread.historyCompactedUpToSeq).toBe(69);
+    expect(harness.jobs.enqueue).not.toHaveBeenCalledWith(manualHistoryCompactJob("thread-1", 69));
+  });
+
+  it("starts a requested compaction at the history window a run actually loads", async () => {
+    const messages = Array.from({ length: 300 }, (_, seq) => ({
+      seq,
+      role: seq % 2 === 0 ? "user" : "bot",
+      blocks: [{ kind: "text" as const, text: `message ${seq}` }],
+    }));
+    const harness = compactionHarness({ deploymentModelKey: "openrouter-key", messages });
+
+    await compactHistory(harness.deps, "thread-1", { throughSeq: 299 });
+
+    const prompt = harness.runtime.run.mock.calls[0]?.[0].prompt ?? "";
+    expect(prompt).not.toContain("message 99\n");
+    expect(prompt).toContain("message 100");
+    expect(harness.thread.historyCompactedUpToSeq).toBe(149);
+    expect(manualCompactionFloor(null, 299)).toBe(99);
+    expect(manualCompactionFloor(180, 299)).toBe(180);
+  });
+
+  it("ends a requested compaction when a clear changes the history generation", async () => {
+    const harness = compactionHarness({
+      deploymentModelKey: "openrouter-key",
+      nextMessageSeq: 120,
+    });
+    harness.prisma.thread.updateMany.mockImplementationOnce(async (args) => {
+      harness.thread.historyCompactedUpToSeq = args.data.historyCompactedUpToSeq;
+      harness.thread.historyCompactionGeneration += 1;
+      return { count: 1 };
+    });
+
+    await compactHistory(harness.deps, "thread-1", { throughSeq: 119 });
+
+    expect(harness.jobs.enqueue).not.toHaveBeenCalledWith(manualHistoryCompactJob("thread-1", 119));
   });
 
   it("does not re-enqueue itself once the backlog no longer warrants compaction", async () => {

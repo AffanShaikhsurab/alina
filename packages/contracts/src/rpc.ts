@@ -87,6 +87,7 @@ import {
   TaughtSkillSchema,
   TeachRecordingEventSchema,
   ThinkingLevelSchema,
+  ThreadContextSchema,
   ThreadMessagePageSchema,
   ThreadSnapshotSchema,
   UpdateAgentSkillInput,
@@ -412,6 +413,14 @@ export const appContract = {
       .output(z.object({ ok: z.literal(true) })),
     markRead: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     markUnread: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
+    /** The bot's current model window and how full its conversation context is. */
+    context: oc.input(botId).output(ThreadContextSchema),
+    /** Summarize the conversation now; `queued` is false when there is nothing new to fold in. */
+    compact: oc
+      .input(botId)
+      .output(
+        z.object({ queued: z.boolean(), throughSeq: z.number().int().nonnegative().nullable() }),
+      ),
   },
   computer: {
     status: oc.input(botId).output(ComputerStatusSchema),

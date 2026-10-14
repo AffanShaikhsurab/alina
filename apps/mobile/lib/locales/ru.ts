@@ -793,4 +793,12 @@ export const RU_MESSAGES: Record<string, string> = {
   "Sign in to your existing account to link SSO":
     "Войдите в существующий аккаунт, чтобы привязать SSO",
   "SSO is temporarily unavailable. Try again.": "SSO временно недоступен. Попробуйте снова.",
+  "Model and context": "Модель и контекст",
+  Context: "Контекст",
+  "{used} of {total}": "{used} из {total}",
+  Compact: "Сжать",
+  "Updates after the next reply": "Обновится после следующего ответа",
+  "Nothing new to compact": "Нечего сжимать",
+  "Could not compact. Try again.": "Не удалось сжать. Попробуйте снова.",
+  "Could not save model": "Не удалось сохранить модель",
 };
