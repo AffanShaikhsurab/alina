@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beginCallAudio, callRecognizerCategory, endCallAudio, setCallSpeaker } from "./call-audio";
 import type { SpeechRecognizer } from "./dictation";
 import { ENDPOINT_SILENCE_MS, listen, setSpeechRecognizer, stop } from "./dictation";
+
+vi.mock("expo-audio", () => ({ setAudioModeAsync: vi.fn(async () => undefined) }));
+vi.mock("expo-speech-recognition", () => ({
+  ExpoSpeechRecognitionModule: { setCategoryIOS: vi.fn(), setAudioSessionActiveIOS: vi.fn() },
+}));
 
 type Listener = (payload: never) => void;
 
@@ -139,7 +145,7 @@ describe("mobile dictation", () => {
       categoryOptions: ["allowBluetooth" as const],
       mode: "voiceChat" as const,
     };
-    await listen({ onFinal: vi.fn(), iosCategory });
+    await listen({ onFinal: vi.fn(), iosCategory: () => iosCategory });
     expect(fake.start).toHaveBeenLastCalledWith({
       lang: "en-US",
       interimResults: true,
@@ -151,6 +157,30 @@ describe("mobile dictation", () => {
     vi.advanceTimersByTime(250);
     expect(fake.start).toHaveBeenCalledTimes(2);
     expect(fake.start).toHaveBeenLastCalledWith(expect.objectContaining({ iosCategory }));
+  });
+
+  it("keeps a Speaker toggle made mid-listen when the recognizer restarts", async () => {
+    await beginCallAudio();
+    await listen({ onFinal: vi.fn(), iosCategory: callRecognizerCategory });
+    expect(fake.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        iosCategory: expect.objectContaining({ categoryOptions: ["allowBluetooth"] }),
+      }),
+    );
+
+    await setCallSpeaker(true);
+    fake.end();
+    vi.advanceTimersByTime(250);
+
+    expect(fake.start).toHaveBeenCalledTimes(2);
+    expect(fake.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        iosCategory: expect.objectContaining({
+          categoryOptions: ["defaultToSpeaker", "allowBluetooth"],
+        }),
+      }),
+    );
+    await endCallAudio();
   });
 
   it("says it went idle when restarts hear nothing at all, instead of going silent", async () => {

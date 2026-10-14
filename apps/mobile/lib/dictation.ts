@@ -39,7 +39,7 @@ export type SpeechRecognizer = {
 type Session = {
   recognizer: SpeechRecognizer;
   lang: string;
-  iosCategory?: SetCategoryOptions;
+  iosCategory?: () => SetCategoryOptions | undefined;
   onInterim?: (text: string) => void;
   onFinal: (text: string) => void;
   onIdle?: () => void;
@@ -107,8 +107,11 @@ export async function listen(opts: {
   onError?: (code: string) => void;
   signal?: AbortSignal;
   lang?: string;
-  /** iOS: the audio session each recognizer start applies, instead of its loudspeaker default. */
-  iosCategory?: SetCategoryOptions;
+  /**
+   * iOS: the audio session each recognizer start applies, instead of its loudspeaker default.
+   * Read at every start, so a route change mid-session (the call's Speaker) survives restarts.
+   */
+  iosCategory?: () => SetCategoryOptions | undefined;
 }): Promise<void> {
   stop();
   const mine = token;
@@ -148,11 +151,12 @@ export async function listen(opts: {
 
 function start(session: Session): void {
   if (active !== session) return;
+  const iosCategory = session.iosCategory?.();
   session.recognizer.start({
     lang: session.lang,
     interimResults: true,
     continuous: true,
-    ...(session.iosCategory ? { iosCategory: session.iosCategory } : {}),
+    ...(iosCategory ? { iosCategory } : {}),
   });
 }
 

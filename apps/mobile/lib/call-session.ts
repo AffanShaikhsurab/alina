@@ -784,8 +784,9 @@ async function dictateTurn(handlers: DictationHandlers, signal: AbortSignal): Pr
     ...handlers,
     signal,
     lang: getActiveUiLocale(),
-    // Each recognizer start applies this; its own default is the loudspeaker in `.measurement`.
-    iosCategory: callRecognizerCategory(),
+    // Each recognizer start reads this, so a Speaker toggle mid-listen sticks; the
+    // recognizer's own default is the loudspeaker in `.measurement`.
+    iosCategory: callRecognizerCategory,
   });
   return true;
 }
