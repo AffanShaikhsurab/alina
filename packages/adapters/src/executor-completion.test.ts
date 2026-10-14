@@ -17,6 +17,7 @@ import {
   runReplyGuidance,
   runSendsFinishNotification,
   stripNoResponseReply,
+  subagentInputFields,
   subagentMarksUnread,
   TICKET_SILENT_REPLY_GUIDANCE,
 } from "./executor.js";
@@ -515,5 +516,21 @@ describe("subagentMarksUnread", () => {
     expect(subagentMarksUnread("bot_message", "completed")).toBe(false);
     expect(subagentMarksUnread("bot_message", "failed")).toBe(true);
     expect(subagentMarksUnread("bot_message", "completed", true)).toBe(true);
+  });
+});
+
+describe("subagentInputFields", () => {
+  it("keeps the rerun input, redacting instructions and dropping absent fields", () => {
+    expect(
+      subagentInputFields(
+        { instructions: "Use key sk-secret-1.", modelProvider: "openai", modelId: "gpt-test" },
+        ["sk-secret-1"],
+      ),
+    ).toEqual({
+      instructions: "Use key [redacted].",
+      modelProvider: "openai",
+      modelId: "gpt-test",
+    });
+    expect(subagentInputFields({}, [])).toEqual({});
   });
 });

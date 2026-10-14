@@ -182,6 +182,10 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     status: z.enum(["running", "completed", "failed"]),
     progress: z.string().optional(),
     result: z.string().optional(),
+    /** The rest of the run_subagent input, kept so the same call can be run again. */
+    instructions: z.string().optional(),
+    modelProvider: z.string().optional(),
+    modelId: z.string().optional(),
   }),
   z.object({
     kind: z.literal("child_bot"),

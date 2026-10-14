@@ -33,6 +33,7 @@ import { COMPUTER_LIFECYCLE_TIMEOUT_MS } from "../lib/computer";
 import { loadDeviceVoiceEnabled } from "../lib/device-voice";
 import { useI18n } from "../lib/i18n";
 import { native, useMobileTokens } from "../lib/native";
+import { setThreadDetail, useThreadDetails } from "../lib/thread-details";
 import { errorText } from "../lib/user-error";
 import { stopVoicePlayback } from "../lib/voice";
 
@@ -68,6 +69,7 @@ export default function BotSettingsScreen() {
   const voiceChoice = useRef(0);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const threadDetails = useThreadDetails(botId);
 
   useEffect(() => {
     if (!botId) return;
@@ -539,6 +541,34 @@ export default function BotSettingsScreen() {
               <Text style={{ color: tokens.mutedForeground, marginTop: 12, fontSize: 13 }}>
                 {modelMetaError}
               </Text>
+            ) : null}
+            {botId ? (
+              <>
+                <View style={[styles.row, { marginTop: 12 }]}>
+                  <Text style={[styles.rowLabel, { color: tokens.mutedForeground }]}>
+                    {t("Show subagents")}
+                  </Text>
+                  <NativeSwitch
+                    accessibilityLabel={t("Show subagents")}
+                    onValueChange={(showSubagents) =>
+                      void setThreadDetail(botId, { showSubagents })
+                    }
+                    value={threadDetails.showSubagents}
+                  />
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLabel, { color: tokens.mutedForeground }]}>
+                    {t("Show tool steps")}
+                  </Text>
+                  <NativeSwitch
+                    accessibilityLabel={t("Show tool steps")}
+                    onValueChange={(showToolSteps) =>
+                      void setThreadDetail(botId, { showToolSteps })
+                    }
+                    value={threadDetails.showToolSteps}
+                  />
+                </View>
+              </>
             ) : null}
           </View>
         ) : null}

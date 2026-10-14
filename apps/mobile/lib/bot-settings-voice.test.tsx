@@ -38,6 +38,10 @@ vi.mock("./bot-voices", () => ({
   setVoiceForBot: mocks.setVoiceForBot,
 }));
 vi.mock("./device-voice", () => ({ loadDeviceVoiceEnabled: async () => true }));
+vi.mock("./thread-details", () => ({
+  setThreadDetail: async () => undefined,
+  useThreadDetails: () => ({ showSubagents: true, showToolSteps: false }),
+}));
 vi.mock("./voice", () => ({ stopVoicePlayback: mocks.stopVoicePlayback }));
 vi.mock("expo-speech", () => ({ stop: mocks.stop, speak: mocks.speak }));
 vi.mock("./api", () => ({

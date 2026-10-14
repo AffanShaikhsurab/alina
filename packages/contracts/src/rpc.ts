@@ -109,6 +109,7 @@ import {
 import { MessageReactionSchema } from "./reactions.js";
 import { RoutineHistorySchema, RoutineRunCursorSchema, RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
+import { SubagentDetailSchema, SubagentRedoInput, SubagentRefInput } from "./subagents.js";
 
 const botId = z.object({ botId: Id });
 const groupId = z.object({ groupId: Id });
@@ -910,6 +911,11 @@ export const appContract = {
   },
   runs: {
     list: oc.input(z.object({ filter: z.enum(["active", "recent"]) })).output(RunsListOutputSchema),
+  },
+  subagents: {
+    get: oc.input(SubagentRefInput).output(SubagentDetailSchema),
+    /** Starts a new run in the bot's chat that calls the same sub-agent with the same input. */
+    redo: oc.input(SubagentRedoInput).output(z.object({ ok: z.literal(true), runId: Id })),
   },
   voice: {
     catalog: oc.output(z.array(VoiceCatalogEntrySchema)),

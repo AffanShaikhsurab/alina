@@ -1324,17 +1324,25 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       .slice(0, 80) || "helper";
   const task = String(args.task ?? "").trim();
   const extra = args.instructions ? String(args.instructions).trim() : "";
+  const requestedProvider = String(args.model_provider ?? "").trim();
+  const requestedModelId = String(args.model_id ?? "").trim();
+  // The rest of the call's input rides on the start and terminal events so it can be rerun.
+  const input = {
+    ...(extra ? { instructions: extra } : {}),
+    ...(requestedProvider && requestedModelId
+      ? { modelProvider: requestedProvider, modelId: requestedModelId }
+      : {}),
+  };
   host.queue.push({
     type: "subagent",
     agentId,
     name,
     task,
+    ...input,
     status: "running",
     progress: "starting…",
   });
 
-  const requestedProvider = String(args.model_provider ?? "").trim();
-  const requestedModelId = String(args.model_id ?? "").trim();
   const hasBackups = Boolean(host.request.fallbackModels?.length);
   let requestModel = hasBackups ? host.activeModel.config : host.request.model;
   try {
@@ -1354,6 +1362,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       agentId,
       name,
       task,
+      ...input,
       status: "failed",
       result: message,
     });
@@ -1376,6 +1385,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       agentId,
       name,
       task,
+      ...input,
       status: "failed",
       result: message,
     });
@@ -1539,6 +1549,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
         agentId,
         name,
         task,
+        ...input,
         status: "failed",
         result: "stopped",
       });
@@ -1569,6 +1580,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
         agentId,
         name,
         task,
+        ...input,
         status: "failed",
         result: message,
       });
@@ -1587,6 +1599,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       agentId,
       name,
       task,
+      ...input,
       status: "completed",
       result: clipped,
     });
@@ -1598,6 +1611,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       agentId,
       name,
       task,
+      ...input,
       status: "failed",
       result: message,
     });
