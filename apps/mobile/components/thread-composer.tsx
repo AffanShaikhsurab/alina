@@ -218,6 +218,8 @@ export function ThreadComposer({
     slashActionOptions.length;
 
   function updateDraft(value: string) {
+    // Editing the draft cancels a /model pick that was waiting for the list to load.
+    pendingModelQuery.current = null;
     setDraft(value);
     const match = /(?:^|\s)@([\w-]*)$/.exec(value);
     setMentionQuery(match ? (match[1] ?? "") : null);
@@ -226,6 +228,7 @@ export function ThreadComposer({
   }
 
   function clearDraft() {
+    pendingModelQuery.current = null;
     setDraft("");
     setSlashQuery(null);
   }
@@ -268,8 +271,8 @@ export function ThreadComposer({
         void pickModel(only.key, only.label);
         return;
       }
-      if (args && !botModel.loaded) pendingModelQuery.current = args;
       updateDraft(`/model ${args}`);
+      if (args && !botModel.loaded) pendingModelQuery.current = args;
       return;
     }
     clearDraft();

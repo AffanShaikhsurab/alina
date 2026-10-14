@@ -401,6 +401,22 @@ describe("thread composer isolation", () => {
     }
   });
 
+  it("drops a waiting /model pick when the draft is edited before the list loads", async () => {
+    const save = vi.spyOn(models.state, "save");
+    models.state.loaded = false;
+    try {
+      type("/model kimi k2");
+      await act(async () => button("Send")!.click());
+      type("hello");
+      models.state.loaded = true;
+      render();
+      await act(async () => {});
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      models.state.loaded = true;
+    }
+  });
+
   it("holds an unknown command beside a mention, and sends one while skills are unknown", () => {
     type("Hi @He");
     press("@Helper");

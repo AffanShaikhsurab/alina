@@ -13,13 +13,19 @@ const api = vi.hoisted(() => ({
   calls: [] as { path: string; body?: unknown }[],
   /** Pending `bots/update` requests, in the order they reached the server. */
   updates: [] as Deferred[],
+  /** When set, `bots/get` waits in `gets` until the test answers it. */
+  holdGets: false,
+  gets: [] as Deferred[],
   bot: { id: "bot-1", modelProvider: null, modelId: null, thinkingLevel: null } as unknown,
 }));
 
 vi.mock("./api", () => ({
   rpc: (path: string, body?: unknown) => {
     api.calls.push({ path, body });
-    if (path === "bots/get") return Promise.resolve(api.bot);
+    if (path === "bots/get") {
+      if (!api.holdGets) return Promise.resolve(api.bot);
+      return new Promise((resolve, reject) => api.gets.push({ resolve, reject }));
+    }
     if (path === "me") return Promise.resolve({ defaultProvider: null, defaultModel: null });
     if (path === "models/list" || path === "models/credentials") return Promise.resolve([]);
     if (path === "bots/update") {
@@ -67,6 +73,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   api.calls = [];
   api.updates = [];
+  api.holdGets = false;
+  api.gets = [];
   container = document.createElement("div");
   root = createRoot(container);
 });
@@ -133,6 +141,36 @@ describe("useBotModel", () => {
       { botId: "bot-1", modelProvider: "b", modelId: "two", thinkingLevel: null },
     ]);
     expect((hook.bot as MobileBot & { modelId: string }).modelId).toBe("two");
+  });
+
+  it("ignores a reload that a newer pick overtook", async () => {
+    await render(1);
+    await flush();
+
+    api.holdGets = true;
+    await render(2);
+    let saved: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      saved = hook.save({
+        botId: "bot-1",
+        modelProvider: "a",
+        modelId: "one",
+        thinkingLevel: null,
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      api.updates[0]?.resolve();
+      await saved;
+    });
+    // The reload started before the pick answers last, with the old model.
+    await act(async () => {
+      api.gets[0]?.resolve(api.bot);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect((hook.bot as MobileBot & { modelId: string | null }).modelId).toBe("one");
   });
 
   it("rolls a failed save back to what the server last accepted", async () => {

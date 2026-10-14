@@ -45,6 +45,10 @@ export function useBotModel(botId: string | undefined, loadKey = 1) {
 
   useEffect(() => {
     if (!botId || !loadKey) return;
+    let current = true;
+    // A load that a newer load or a later save has overtaken must not replace their state.
+    const saveAtLoad = saveGeneration.current;
+    const stillCurrent = () => alive.current && current && saveAtLoad === saveGeneration.current;
     setLoadError(null);
     void Promise.all([
       rpc<MobileBot>("bots/get", { botId }),
@@ -53,7 +57,7 @@ export function useBotModel(botId: string | undefined, loadKey = 1) {
       rpc<MobileModelCredential[]>("models/credentials"),
     ])
       .then(([nextBot, nextMe, nextCatalog, nextCredentials]) => {
-        if (!alive.current) return;
+        if (!stillCurrent()) return;
         confirmed.current = nextBot;
         setBot(nextBot);
         setMe(nextMe);
@@ -61,8 +65,11 @@ export function useBotModel(botId: string | undefined, loadKey = 1) {
         setCredentials(nextCredentials);
       })
       .catch((err) => {
-        if (alive.current) setLoadError(errorText(err, t("Could not load model settings")));
+        if (stillCurrent()) setLoadError(errorText(err, t("Could not load model settings")));
       });
+    return () => {
+      current = false;
+    };
   }, [botId, loadKey]);
 
   const selectedKey = bot ? botModelKey(bot, catalog) : "";
