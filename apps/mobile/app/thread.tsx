@@ -980,6 +980,10 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
         }),
     },
     {
+      text: t("Model and context"),
+      onPress: () => router.push({ pathname: "/bot-model", params: { botId: botId ?? "" } }),
+    },
+    {
       text: t("Open computer"),
       onPress: () =>
         router.push({
