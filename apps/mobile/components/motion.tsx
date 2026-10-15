@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { AccessibilityState, Insets, StyleProp, ViewStyle } from "react-native";
 import { Pressable } from "react-native";
 import Animated, {
+  Easing,
   FadeIn,
   FadeInDown,
   FadeOut,
@@ -10,34 +11,42 @@ import Animated, {
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
-  withSpring,
   withTiming,
 } from "react-native-reanimated";
+import type { BezierCurve } from "../lib/motion-config";
+import { EASE_IN_OUT, EASE_OUT, MOTION_DISTANCE, MOTION_MS } from "../lib/motion-config";
 
 /** An Animated.View that takes `entering`, `exiting` and `layout`. */
 export const MotionView = Animated.View;
 /** `skipEntering` keeps a screen's first paint still; only later arrivals animate. */
 export { LayoutAnimationConfig };
 
-// Layout animations follow iOS Reduce Motion by default (ReduceMotion.System): they jump to
-// their end state instead of moving.
+// Everything here is a timing curve that settles once: no springs, so nothing bounces.
+// Layout animations and withTiming follow iOS Reduce Motion by default (ReduceMotion.System):
+// they jump to their end state instead of moving.
+
+const curve = ([x1, y1, x2, y2]: BezierCurve) => Easing.bezier(x1, y1, x2, y2);
+export const easeOut = curve(EASE_OUT);
+export const easeInOut = curve(EASE_IN_OUT);
 
 /** A popover rising out of the composer, and the way it shrinks or grows as the list filters. */
-export const popoverEntering = FadeInDown.springify().damping(22).stiffness(260);
-export const popoverExiting = FadeOut.duration(120);
-export const popoverLayout = LinearTransition.springify().damping(24).stiffness(260);
+export const popoverEntering = FadeInDown.duration(MOTION_MS.enter)
+  .easing(easeOut)
+  .withInitialValues({ transform: [{ translateY: MOTION_DISTANCE.popover }] });
+export const popoverExiting = FadeOut.duration(MOTION_MS.exit).easing(easeInOut);
+export const popoverLayout = LinearTransition.duration(MOTION_MS.layout).easing(easeOut);
 
 /** A new message settling into place at the bottom of the thread. */
-export const messageEntering = FadeInDown.springify().damping(20).stiffness(200);
+export const messageEntering = FadeInDown.duration(MOTION_MS.enter)
+  .easing(easeOut)
+  .withInitialValues({ transform: [{ translateY: MOTION_DISTANCE.message }] });
 
 /** Small state lines and indicators that come and go. */
-export const quietEntering = FadeIn.duration(180);
-export const quietExiting = FadeOut.duration(140);
-
-const PRESS_SPRING = { damping: 18, stiffness: 420, mass: 0.6 };
+export const quietEntering = FadeIn.duration(180).easing(easeOut);
+export const quietExiting = FadeOut.duration(140).easing(easeInOut);
 
 /**
- * A control that gives under the finger: a quick spring scale on the UI thread, or a dim when
+ * A control that gives under the finger: a quick eased scale on the UI thread, or a dim when
  * Reduce Motion is on. `haptic` runs on press, before `onPress`.
  */
 export function PressScale({
@@ -67,11 +76,13 @@ export function PressScale({
 }) {
   const reduceMotion = useReducedMotion();
   const pressed = useSharedValue(0);
-  const feedback = useAnimatedStyle(() =>
-    reduceMotion
-      ? { opacity: withTiming(pressed.value ? 0.6 : 1, { duration: 90 }) }
-      : { transform: [{ scale: withSpring(pressed.value ? pressedScale : 1, PRESS_SPRING) }] },
-  );
+  const feedback = useAnimatedStyle(() => {
+    const down = pressed.value === 1;
+    const timing = { duration: down ? MOTION_MS.pressIn : MOTION_MS.pressOut, easing: easeOut };
+    return reduceMotion
+      ? { opacity: withTiming(down ? 0.6 : 1, timing) }
+      : { transform: [{ scale: withTiming(down ? pressedScale : 1, timing) }] };
+  });
   return (
     <Pressable
       accessibilityRole="button"

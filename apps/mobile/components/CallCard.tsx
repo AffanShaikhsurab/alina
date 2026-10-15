@@ -4,27 +4,41 @@ import { useKeepAwake } from "expo-keep-awake";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import type { ComponentProps, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
-import { BackHandler, Keyboard, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { EntryExitAnimationFunction, SharedValue } from "react-native-reanimated";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  BackHandler,
+  Keyboard,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import type { SharedValue } from "react-native-reanimated";
 import Animated, {
   cancelAnimation,
   Easing,
-  FadeIn,
-  FadeInUp,
-  FadeOut,
-  FadeOutUp,
+  Extrapolation,
   interpolate,
+  ReduceMotion,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withRepeat,
   withSequence,
-  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { scheduleOnRN } from "react-native-worklets";
 import { mobileTokens } from "../lib/appearance";
+import {
+  CALL_UPWARD_STRETCH,
+  callDragMinimizes,
+  callDragOffset,
+  callSlideDuration,
+} from "../lib/call-gesture";
 import { callClock, callPresence } from "../lib/call-screen";
 import type { CallState } from "../lib/call-session";
 import {
@@ -36,18 +50,28 @@ import {
   useCallSession,
 } from "../lib/call-session";
 import { callTranscript, transcriptLineLayout } from "../lib/call-transcript";
+import { transparentColor } from "../lib/color";
 import { selectionHaptic, tapHaptic } from "../lib/haptics";
 import { useI18n } from "../lib/i18n";
+import { MOTION_DISTANCE, MOTION_MS } from "../lib/motion-config";
 import { BotAvatar } from "./bot-avatar";
 import { GlassSurface } from "./glass-surface";
-import { PressScale, quietEntering, quietExiting } from "./motion";
+import { easeInOut, easeOut, PressScale, quietEntering, quietExiting } from "./motion";
 import { NativeSymbol } from "./native-symbol";
 
 /** The call is always dark, like a phone call, whatever the app's appearance. */
 const callTokens = () => mobileTokens("dark");
 
-const AVATAR_SIZE = 76;
+const AVATAR_SIZE = 80;
 const BUTTON_SIZE = 56;
+const TOP_BUTTON_SIZE = 44;
+/** How dark the chat gets behind the full-screen call while it is dragged or slides. */
+const SCRIM_OPACITY = 0.5;
+const TRANSCRIPT_FADE = 32;
+
+// Fades play under Reduce Motion too; only movement is dropped there.
+const fadeIn = { duration: MOTION_MS.enter, easing: easeOut, reduceMotion: ReduceMotion.Never };
+const fadeOut = { duration: MOTION_MS.close, easing: easeInOut, reduceMotion: ReduceMotion.Never };
 
 /**
  * A call lives in the foreground: once the screen locks, Android pauses the app and the
@@ -59,142 +83,298 @@ function KeepScreenOnDuringCall() {
   return null;
 }
 
-// The call rises into place and settles back as one piece; Reduce Motion gets a plain fade.
-const callEntering: EntryExitAnimationFunction = () => {
-  "worklet";
-  return {
-    initialValues: { opacity: 0, transform: [{ translateY: 48 }] },
-    animations: {
-      opacity: withTiming(1, { duration: 220 }),
-      transform: [{ translateY: withSpring(0, { damping: 22, stiffness: 220 }) }],
-    },
-  };
-};
-const callExiting: EntryExitAnimationFunction = () => {
-  "worklet";
-  return {
-    initialValues: { opacity: 1, transform: [{ scale: 1 }] },
-    animations: {
-      opacity: withTiming(0, { duration: 200 }),
-      transform: [{ scale: withTiming(0.96, { duration: 200 }) }],
-    },
-  };
-};
+/**
+ * Keeps a layer mounted after it stops being visible, until its own closing motion calls
+ * `gone`, so the session can flip at once while the screen finishes moving.
+ */
+function usePresence(visible: boolean) {
+  const [mounted, setMounted] = useState(visible);
+  if (visible && !mounted) setMounted(true);
+  const gone = useCallback(() => setMounted(false), []);
+  return { mounted: visible || mounted, leaving: !visible && mounted, gone };
+}
+
+type Leaving = "minimize" | "end" | null;
 
 export function CallCard() {
   const call = useCallSession();
-  if (!call) return null;
+  // The call that just ended stays on screen, unchanged, while it fades back to the chat.
+  const last = useRef<CallState | null>(null);
+  if (call) last.current = call;
+  const shown = call ?? last.current;
+  const screen = usePresence(Boolean(call && !call.minimized));
+  const pill = usePresence(Boolean(call?.minimized));
   return (
     <>
-      <KeepScreenOnDuringCall />
-      {call.minimized ? <MinimizedCall call={call} /> : <CallScreen call={call} />}
+      {call ? <KeepScreenOnDuringCall /> : null}
+      {shown && pill.mounted ? (
+        <MinimizedCall call={shown} leaving={pill.leaving} onGone={pill.gone} />
+      ) : null}
+      {shown && screen.mounted ? (
+        <CallScreen
+          // A call that starts while the last one is still fading out gets a fresh screen.
+          key={shown.startedAt}
+          call={shown}
+          leaving={screen.leaving ? (call ? "minimize" : "end") : null}
+          onGone={screen.gone}
+        />
+      ) : null}
     </>
   );
 }
 
-/** The full-screen call: who is on the line, the live transcript, and the call controls. */
-function CallScreen({ call }: { call: CallState }) {
+/**
+ * The full-screen call: who is on the line, the live transcript, and the call controls. It
+ * rises from the bottom, folds back down when dragged past a quarter of the screen (or flicked),
+ * and fades out on hang-up. Every move is a timing curve, so it stops once without bouncing.
+ */
+function CallScreen({
+  call,
+  leaving,
+  onGone,
+}: {
+  call: CallState;
+  leaving: Leaving;
+  onGone: () => void;
+}) {
   const { t } = useI18n();
   const tokens = callTokens();
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   const reduceMotion = useReducedMotion();
+  const offset = useSharedValue(reduceMotion ? 0 : height);
+  const opacity = useSharedValue(reduceMotion ? 0 : 1);
+  const dragStart = useSharedValue(0);
+  const releaseVelocity = useSharedValue(0);
+
   useEffect(() => {
     Keyboard.dismiss();
+  }, []);
+
+  useEffect(() => {
+    if (leaving) return;
     // Android's back gesture folds the call over the chat instead of leaving the screen below.
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
       setCallMinimized(true);
       return true;
     });
     return () => back.remove();
+  }, [leaving]);
+
+  useEffect(() => {
+    const finished = (done?: boolean) => {
+      "worklet";
+      if (done) scheduleOnRN(onGone);
+    };
+    if (leaving === "end") {
+      opacity.value = withTiming(0, fadeOut, finished);
+      if (!reduceMotion) {
+        offset.value = withTiming(offset.value + MOTION_DISTANCE.close, {
+          duration: MOTION_MS.close,
+          easing: easeInOut,
+        });
+      }
+    } else if (leaving === "minimize") {
+      if (reduceMotion) {
+        opacity.value = withTiming(0, fadeOut, finished);
+      } else {
+        const remaining = height - offset.value;
+        const duration = callSlideDuration(remaining, releaseVelocity.value, height);
+        releaseVelocity.value = 0;
+        offset.value = withTiming(height, { duration, easing: easeOut }, finished);
+      }
+    } else {
+      opacity.value = withTiming(1, fadeIn);
+      offset.value = reduceMotion
+        ? 0
+        : withTiming(0, { duration: MOTION_MS.sheetIn, easing: easeOut });
+    }
+  }, [leaving, reduceMotion, height, onGone, offset, opacity, releaseVelocity]);
+
+  const minimize = useCallback(() => {
+    tapHaptic();
+    setCallMinimized(true);
   }, []);
+
+  // Everything but the transcript drags: the top bar, the name, and the caption and controls band
+  // at the bottom. The transcript sits outside both detectors, so scrolling it never moves the
+  // call, and buttons keep their taps behind the 12 pt activation slop. A gesture object can only
+  // attach to one detector, so each band gets its own instance of the same pan.
+  const makeDrag = useCallback(
+    () =>
+      Gesture.Pan()
+        .enabled(!leaving)
+        .activeOffsetY([-12, 12])
+        .failOffsetX([-24, 24])
+        .onStart((event) => {
+          cancelAnimation(offset);
+          // translationY already includes the activation slop; subtract it so the call does not
+          // jump 12 pt when the drag takes over.
+          dragStart.value = offset.value - event.translationY;
+        })
+        .onUpdate((event) => {
+          offset.value = callDragOffset(dragStart.value + event.translationY);
+        })
+        .onEnd((event) => {
+          if (callDragMinimizes(offset.value, event.velocityY, height)) {
+            releaseVelocity.value = event.velocityY;
+            scheduleOnRN(minimize);
+            return;
+          }
+          offset.value = withTiming(0, { duration: MOTION_MS.settle, easing: easeOut });
+        }),
+    [leaving, height, minimize, offset, dragStart, releaseVelocity],
+  );
+  const drag = useMemo(makeDrag, [makeDrag]);
+  const controlsDrag = useMemo(makeDrag, [makeDrag]);
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: offset.value }],
+  }));
+  const scrimStyle = useAnimatedStyle(() => ({
+    opacity:
+      opacity.value *
+      interpolate(offset.value, [0, height], [SCRIM_OPACITY, 0], Extrapolation.CLAMP),
+  }));
+
   return (
-    <Animated.View
-      accessibilityViewIsModal
-      entering={reduceMotion ? FadeIn.duration(180) : callEntering}
-      exiting={reduceMotion ? FadeOut.duration(160) : callExiting}
-      style={[
-        styles.screen,
-        {
-          backgroundColor: tokens.background,
-          paddingTop: insets.top + 8,
-          paddingBottom: Math.max(insets.bottom, 16),
-        },
-      ]}
+    <View
+      pointerEvents={leaving ? "none" : "box-none"}
+      importantForAccessibility={leaving ? "no-hide-descendants" : "auto"}
+      accessibilityElementsHidden={Boolean(leaving)}
+      style={styles.layer}
     >
-      <StatusBar style="light" />
-      <View style={styles.topBar}>
-        <CallButton
-          label={t("Minimise call")}
-          ios="chevron.up"
-          android="chevron-up"
-          size={44}
-          onPress={() => {
-            selectionHaptic();
-            setCallMinimized(true);
-          }}
-        />
-      </View>
-      <View style={styles.identity}>
-        <CallPresence call={call} size={AVATAR_SIZE} />
-        <Text numberOfLines={1} style={[styles.name, { color: tokens.foreground }]}>
-          {call.botName}
-        </Text>
-        <CallTimer
-          startedAt={call.startedAt}
-          style={[styles.timer, { color: tokens.mutedForeground }]}
-        />
-      </View>
-      <View style={styles.middle}>
+      {/* Light text on the dark call. Folding away hands the status bar back to the chat at
+          once; a hang-up keeps it light through the short fade. */}
+      {leaving === "minimize" ? null : <StatusBar style="light" />}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { backgroundColor: tokens.background }, scrimStyle]}
+      />
+      <Animated.View
+        accessibilityViewIsModal={!leaving}
+        style={[
+          styles.screen,
+          {
+            backgroundColor: tokens.background,
+            paddingTop: insets.top + 8,
+            // The sheet runs past the bottom edge, so a stretch upwards never shows the chat.
+            paddingBottom: Math.max(insets.bottom + 8, 24) + CALL_UPWARD_STRETCH,
+          },
+          sheetStyle,
+        ]}
+      >
+        <GestureDetector gesture={drag}>
+          <View style={styles.grabArea}>
+            <View style={styles.topBar}>
+              <CallButton
+                label={t("Minimise call")}
+                ios="chevron.up"
+                android="chevron-up"
+                size={TOP_BUTTON_SIZE}
+                onPress={() => {
+                  selectionHaptic();
+                  setCallMinimized(true);
+                }}
+              />
+            </View>
+            <View style={styles.identity}>
+              <CallPresence call={call} size={AVATAR_SIZE} />
+              <Text numberOfLines={1} style={[styles.name, { color: tokens.foreground }]}>
+                {call.botName}
+              </Text>
+              <CallTimer
+                startedAt={call.startedAt}
+                style={[styles.timer, { color: tokens.mutedForeground }]}
+              />
+            </View>
+          </View>
+        </GestureDetector>
         {call.transcriptOpen ? <CallTranscript call={call} /> : null}
-      </View>
-      {call.caption ? (
-        <Animated.Text
-          entering={quietEntering}
-          exiting={quietExiting}
-          accessibilityLiveRegion="polite"
-          style={[styles.caption, { color: tokens.mutedForeground }]}
-        >
-          {call.caption}
-        </Animated.Text>
-      ) : null}
-      <View style={styles.controls}>
-        <CallButton
-          label={call.muted ? t("Unmute") : t("Mute")}
-          ios={call.muted ? "mic.slash.fill" : "mic.fill"}
-          android={call.muted ? "mic-off" : "mic"}
-          selected={call.muted}
-          onPress={() => {
-            tapHaptic();
-            toggleMute();
-          }}
-        />
-        <CallSettings call={call} />
-        <View style={styles.controlsGap} />
-        <CallButton
-          label={t("End call")}
-          ios="xmark"
-          android="close"
-          destructive
-          onPress={() => {
-            tapHaptic();
-            endCall();
-          }}
-        />
-      </View>
-    </Animated.View>
+        <GestureDetector gesture={controlsDrag}>
+          <View>
+            {call.caption ? (
+              <Animated.Text
+                entering={quietEntering}
+                exiting={quietExiting}
+                accessibilityLiveRegion="polite"
+                style={[styles.caption, { color: tokens.mutedForeground }]}
+              >
+                {call.caption}
+              </Animated.Text>
+            ) : null}
+            <View style={styles.controls}>
+              <CallButton
+                label={call.muted ? t("Unmute") : t("Mute")}
+                ios={call.muted ? "mic.slash.fill" : "mic.fill"}
+                android={call.muted ? "mic-off" : "mic"}
+                selected={call.muted}
+                onPress={() => {
+                  tapHaptic();
+                  toggleMute();
+                }}
+              />
+              <CallSettings call={call} />
+              <View style={styles.controlsGap} />
+              <CallButton
+                label={t("End call")}
+                ios="xmark"
+                android="close"
+                destructive
+                onPress={() => {
+                  tapHaptic();
+                  endCall();
+                }}
+              />
+            </View>
+          </View>
+        </GestureDetector>
+      </Animated.View>
+    </View>
   );
 }
 
 /** The call folded over the chat: tap to open it again, or hang up from here. */
-function MinimizedCall({ call }: { call: CallState }) {
+function MinimizedCall({
+  call,
+  leaving,
+  onGone,
+}: {
+  call: CallState;
+  leaving: boolean;
+  onGone: () => void;
+}) {
   const { t } = useI18n();
   const tokens = callTokens();
   const insets = useSafeAreaInsets();
+  const reduceMotion = useReducedMotion();
+  const shift = useSharedValue(reduceMotion ? 0 : -MOTION_DISTANCE.pill);
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    const finished = (done?: boolean) => {
+      "worklet";
+      if (done) scheduleOnRN(onGone);
+    };
+    const target = leaving ? -MOTION_DISTANCE.pill : 0;
+    const timing = leaving
+      ? { duration: MOTION_MS.exit, easing: easeInOut }
+      : { duration: MOTION_MS.enter, easing: easeOut };
+    opacity.value = withTiming(
+      leaving ? 0 : 1,
+      { ...timing, reduceMotion: ReduceMotion.Never },
+      leaving ? finished : undefined,
+    );
+    shift.value = reduceMotion ? 0 : withTiming(target, timing);
+  }, [leaving, reduceMotion, onGone, opacity, shift]);
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: shift.value }],
+  }));
   return (
     <Animated.View
-      entering={FadeInUp.springify().damping(20).stiffness(220)}
-      exiting={FadeOutUp.duration(160)}
-      style={[styles.pillWrap, { top: insets.top + 52 }]}
+      pointerEvents={leaving ? "none" : "box-none"}
+      style={[styles.pillWrap, { top: insets.top + 52 }, style]}
     >
       <GlassSurface
         colorScheme="dark"
@@ -299,21 +479,32 @@ function CallSettings({ call }: { call: CallState }) {
         accessibilityLabel={t("Call settings")}
         style={{ width: BUTTON_SIZE, height: BUTTON_SIZE }}
       >
-        <GlassSurface
-          shape="circle"
-          colorScheme="dark"
-          style={[styles.round, { width: BUTTON_SIZE, height: BUTTON_SIZE }]}
-          fallbackStyle={{ borderRadius: BUTTON_SIZE / 2, backgroundColor: tokens.muted }}
-        >
+        <RoundGlass size={BUTTON_SIZE}>
           <NativeSymbol
             ios="gearshape.fill"
             android="settings"
-            size={22}
+            size={BUTTON_SIZE * 0.4}
             color={tokens.foreground}
           />
-        </GlassSurface>
+        </RoundGlass>
       </View>
     </MenuView>
+  );
+}
+
+/** The call's round glass: exactly the button's size, with the icon centred on it. */
+function RoundGlass({ size, children }: { size: number; children: ReactNode }) {
+  const tokens = callTokens();
+  const round = { width: size, height: size, borderRadius: size / 2 };
+  return (
+    <GlassSurface
+      shape="circle"
+      colorScheme="dark"
+      style={[styles.round, round]}
+      fallbackStyle={{ backgroundColor: tokens.muted }}
+    >
+      {children}
+    </GlassSurface>
   );
 }
 
@@ -335,7 +526,6 @@ function CallButton({
   onPress: () => void;
 }) {
   const tokens = callTokens();
-  const fill = destructive ? tokens.destructive : selected ? tokens.foreground : tokens.muted;
   const iconColor = destructive
     ? tokens.destructiveForeground
     : selected
@@ -353,16 +543,17 @@ function CallButton({
     >
       {destructive || selected ? (
         // Solid fills read at a glance: red to hang up, white while muted.
-        <View style={[styles.round, round, { backgroundColor: fill }]}>{icon}</View>
-      ) : (
-        <GlassSurface
-          shape="circle"
-          colorScheme="dark"
-          style={[styles.round, round]}
-          fallbackStyle={{ borderRadius: size / 2, backgroundColor: fill }}
+        <View
+          style={[
+            styles.round,
+            round,
+            { backgroundColor: destructive ? tokens.destructive : tokens.foreground },
+          ]}
         >
           {icon}
-        </GlassSurface>
+        </View>
+      ) : (
+        <RoundGlass size={size}>{icon}</RoundGlass>
       )}
     </PressScale>
   );
@@ -394,11 +585,7 @@ function CallPresence({ call, size }: { call: CallState; size: number }) {
 
 function Crossfade({ children }: { children: ReactNode }) {
   return (
-    <Animated.View
-      entering={FadeIn.duration(200)}
-      exiting={FadeOut.duration(160)}
-      style={styles.crossfade}
-    >
+    <Animated.View entering={quietEntering} exiting={quietExiting} style={styles.crossfade}>
       {children}
     </Animated.View>
   );
@@ -411,13 +598,13 @@ function SpeakingPulse({ active, children }: { active: boolean; children: ReactN
   useEffect(() => {
     if (!active || reduceMotion) {
       cancelAnimation(scale);
-      scale.value = withTiming(1, { duration: 160 });
+      scale.value = withTiming(1, { duration: 160, easing: easeOut });
       return;
     }
     scale.value = withRepeat(
       withSequence(
-        withTiming(1.06, { duration: 520, easing: Easing.inOut(Easing.quad) }),
-        withTiming(1, { duration: 520, easing: Easing.inOut(Easing.quad) }),
+        withTiming(1.05, { duration: 600, easing: easeInOut }),
+        withTiming(1, { duration: 600, easing: easeInOut }),
       ),
       -1,
     );
@@ -517,69 +704,121 @@ function CallTimer({
   );
 }
 
-/** Both sides, newest at the bottom: the bot leading in primary text, the caller trailing in grey. */
+/**
+ * Both sides, newest at the bottom: the bot leading in primary text, the caller trailing in
+ * grey. Once it outgrows its space, older lines dissolve under a fade at the top.
+ */
 function CallTranscript({ call }: { call: CallState }) {
   const tokens = callTokens();
   const reduceMotion = useReducedMotion();
   const scroll = useRef<ScrollView>(null);
+  const size = useRef({ viewport: 0, content: 0 });
+  const [overflowing, setOverflowing] = useState(false);
+  const measure = (next: Partial<typeof size.current>) => {
+    size.current = { ...size.current, ...next };
+    const { viewport, content } = size.current;
+    setOverflowing(viewport > 0 && content > viewport + 1);
+  };
   const lines = callTranscript(call);
   return (
-    <ScrollView
-      ref={scroll}
-      style={styles.transcript}
-      contentContainerStyle={styles.transcriptLines}
-      showsVerticalScrollIndicator={false}
-      onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: !reduceMotion })}
-    >
-      {lines.map((line) => {
-        const layout = transcriptLineLayout(line);
-        return (
-          <Animated.View
-            key={line.key}
-            entering={FadeIn.duration(220)}
-            style={layout.align === "end" ? styles.userLine : styles.botLine}
-          >
-            <Text
-              style={[
-                styles.line,
-                layout.align === "end" && styles.userText,
-                {
-                  color: layout.tone === "primary" ? tokens.foreground : tokens.mutedForeground,
-                },
-              ]}
+    <View style={styles.transcriptArea}>
+      <ScrollView
+        ref={scroll}
+        style={styles.transcript}
+        contentContainerStyle={[
+          styles.transcriptLines,
+          overflowing && { paddingTop: TRANSCRIPT_FADE },
+        ]}
+        showsVerticalScrollIndicator={false}
+        onLayout={(event) => measure({ viewport: event.nativeEvent.layout.height })}
+        onContentSizeChange={(_width, height) => {
+          measure({ content: height });
+          scroll.current?.scrollToEnd({ animated: !reduceMotion });
+        }}
+      >
+        {lines.map((line) => {
+          const layout = transcriptLineLayout(line);
+          return (
+            <Animated.View
+              key={line.key}
+              entering={quietEntering}
+              style={layout.align === "end" ? styles.userLine : styles.botLine}
             >
-              {line.text}
-            </Text>
-          </Animated.View>
-        );
-      })}
-    </ScrollView>
+              <Text
+                style={[
+                  styles.line,
+                  layout.align === "end" && styles.userText,
+                  {
+                    color: layout.tone === "primary" ? tokens.foreground : tokens.mutedForeground,
+                  },
+                ]}
+              >
+                {line.text}
+              </Text>
+            </Animated.View>
+          );
+        })}
+      </ScrollView>
+      {overflowing ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.transcriptFade,
+            {
+              experimental_backgroundImage: `linear-gradient(to bottom, ${tokens.background} 0%, ${transparentColor(tokens.background)} 100%)`,
+            },
+          ]}
+        />
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  layer: {
     position: "absolute",
     top: 0,
     right: 0,
     bottom: 0,
     left: 0,
     zIndex: 100,
-    paddingHorizontal: 20,
   },
-  topBar: { flexDirection: "row", height: 44 },
-  identity: { alignItems: "center", gap: 6, marginTop: 4 },
-  name: { fontSize: 20, fontWeight: "600", marginTop: 10, writingDirection: "auto" },
-  timer: { fontSize: 15 },
-  middle: { flex: 1, justifyContent: "flex-end", paddingTop: 24 },
-  caption: { fontSize: 14, textAlign: "center", marginBottom: 12, writingDirection: "auto" },
-  controls: { flexDirection: "row", alignItems: "center", gap: 16, paddingTop: 12 },
+  screen: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: -CALL_UPWARD_STRETCH,
+    left: 0,
+    paddingHorizontal: 24,
+  },
+  // Takes the free space above the transcript, so that space drags the call too.
+  grabArea: { flexGrow: 1, flexShrink: 0, paddingBottom: 24 },
+  topBar: { flexDirection: "row", height: TOP_BUTTON_SIZE },
+  identity: { alignItems: "center", marginTop: 8 },
+  name: {
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "600",
+    marginTop: 16,
+    writingDirection: "auto",
+  },
+  timer: { fontSize: 15, lineHeight: 20, marginTop: 4 },
+  caption: {
+    fontSize: 15,
+    lineHeight: 20,
+    textAlign: "center",
+    marginBottom: 16,
+    writingDirection: "auto",
+  },
+  controls: { flexDirection: "row", alignItems: "center", gap: 16, paddingTop: 16 },
   controlsGap: { flex: 1 },
   round: { alignItems: "center", justifyContent: "center" },
   crossfade: { position: "absolute", alignItems: "center", justifyContent: "center" },
   dots: { flexDirection: "row", alignItems: "center" },
-  transcript: { flexGrow: 0, maxHeight: "100%" },
-  transcriptLines: { gap: 14, paddingBottom: 20 },
+  transcriptArea: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
+  transcript: { flexGrow: 0, flexShrink: 1 },
+  transcriptLines: { gap: 16, paddingBottom: 24 },
+  transcriptFade: { position: "absolute", top: 0, right: 0, left: 0, height: TRANSCRIPT_FADE },
   line: { fontSize: 17, lineHeight: 24, writingDirection: "auto" },
   botLine: { alignSelf: "flex-start", maxWidth: "88%" },
   userLine: { alignSelf: "flex-end", maxWidth: "80%" },
@@ -589,7 +828,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingStart: 8,
+    paddingStart: 10,
     paddingEnd: 8,
     height: 48,
     borderRadius: 24,
@@ -599,6 +838,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   pillBody: { flexDirection: "row", alignItems: "center", gap: 10, height: 48 },
-  pillName: { fontSize: 15, fontWeight: "600", maxWidth: 140, writingDirection: "auto" },
-  pillTimer: { fontSize: 14, fontVariant: ["tabular-nums"] },
+  pillName: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "600",
+    maxWidth: 140,
+    writingDirection: "auto",
+  },
+  pillTimer: { fontSize: 15, lineHeight: 20, fontVariant: ["tabular-nums"] },
 });
