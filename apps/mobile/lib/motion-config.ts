@@ -35,9 +35,3 @@ export const MOTION_MS = {
 
 /** How far arriving things travel, in pt. */
 export const MOTION_DISTANCE = { popover: 8, message: 12, pill: 8, close: 24 } as const;
-
-/** True when the curve stays within its start and end values for the whole animation. */
-export function curveNeverOvershoots([x1, y1, x2, y2]: BezierCurve): boolean {
-  const unit = (value: number) => value >= 0 && value <= 1;
-  return unit(x1) && unit(y1) && unit(x2) && unit(y2);
-}

@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { curveNeverOvershoots, EASE_IN_OUT, EASE_OUT, MOTION_MS } from "./motion-config";
+import type { BezierCurve } from "./motion-config";
+import { EASE_IN_OUT, EASE_OUT, MOTION_MS } from "./motion-config";
+
+/** True when the curve stays within its start and end values for the whole animation. */
+function curveNeverOvershoots([x1, y1, x2, y2]: BezierCurve): boolean {
+  const unit = (value: number) => value >= 0 && value <= 1;
+  return unit(x1) && unit(y1) && unit(x2) && unit(y2);
+}
 
 // Records every modifier the shared presets are built with, and every animation they call.
 const calls = vi.hoisted(() => [] as string[]);

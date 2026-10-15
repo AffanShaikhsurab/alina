@@ -324,6 +324,23 @@ describe("CallCard", () => {
     expect(container.childElementCount).toBe(0);
   });
 
+  it("opens a fresh, interactive call screen when a new call starts during the hang-up fade", async () => {
+    await startOnScreen(callDeps());
+    motion.hold = true;
+    press("End call");
+    expect(container.textContent).toContain("Ada");
+    await act(async () => {
+      // A later start time, as a new call always has.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      startCall({ botId: "bot-2", botName: "Grace" }, callDeps());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).toContain("Grace");
+    expect(container.textContent).not.toContain("Ada");
+    expect(container.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(button("End call")).not.toBeNull();
+  });
+
   it("slides the call away before it rests as a pill, and fades the pill out on hang-up", async () => {
     await startOnScreen(callDeps());
     motion.hold = true;

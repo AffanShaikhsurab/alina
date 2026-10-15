@@ -112,6 +112,8 @@ export function CallCard() {
       ) : null}
       {shown && screen.mounted ? (
         <CallScreen
+          // A call that starts while the last one is still fading out gets a fresh screen.
+          key={shown.startedAt}
           call={shown}
           leaving={screen.leaving ? (call ? "minimize" : "end") : null}
           onGone={screen.gone}
@@ -194,17 +196,21 @@ function CallScreen({
     setCallMinimized(true);
   }, []);
 
-  // Only the top of the call (controls, name, and the empty space above the transcript) drags;
-  // the transcript sits outside this detector, so scrolling it never moves the call.
-  const drag = useMemo(
+  // Everything but the transcript drags: the top bar, the name, and the caption and controls band
+  // at the bottom. The transcript sits outside both detectors, so scrolling it never moves the
+  // call, and buttons keep their taps behind the 12 pt activation slop. A gesture object can only
+  // attach to one detector, so each band gets its own instance of the same pan.
+  const makeDrag = useCallback(
     () =>
       Gesture.Pan()
         .enabled(!leaving)
         .activeOffsetY([-12, 12])
         .failOffsetX([-24, 24])
-        .onStart(() => {
+        .onStart((event) => {
           cancelAnimation(offset);
-          dragStart.value = offset.value;
+          // translationY already includes the activation slop; subtract it so the call does not
+          // jump 12 pt when the drag takes over.
+          dragStart.value = offset.value - event.translationY;
         })
         .onUpdate((event) => {
           offset.value = callDragOffset(dragStart.value + event.translationY);
@@ -219,6 +225,8 @@ function CallScreen({
         }),
     [leaving, height, minimize, offset, dragStart, releaseVelocity],
   );
+  const drag = useMemo(makeDrag, [makeDrag]);
+  const controlsDrag = useMemo(makeDrag, [makeDrag]);
 
   const sheetStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -237,8 +245,9 @@ function CallScreen({
       accessibilityElementsHidden={Boolean(leaving)}
       style={styles.layer}
     >
-      {/* Light text on the dark call until the call has fully left the screen. */}
-      <StatusBar style="light" />
+      {/* Light text on the dark call. Folding away hands the status bar back to the chat at
+          once; a hang-up keeps it light through the short fade. */}
+      {leaving === "minimize" ? null : <StatusBar style="light" />}
       <Animated.View
         pointerEvents="none"
         style={[StyleSheet.absoluteFill, { backgroundColor: tokens.background }, scrimStyle]}
@@ -283,40 +292,44 @@ function CallScreen({
           </View>
         </GestureDetector>
         {call.transcriptOpen ? <CallTranscript call={call} /> : null}
-        {call.caption ? (
-          <Animated.Text
-            entering={quietEntering}
-            exiting={quietExiting}
-            accessibilityLiveRegion="polite"
-            style={[styles.caption, { color: tokens.mutedForeground }]}
-          >
-            {call.caption}
-          </Animated.Text>
-        ) : null}
-        <View style={styles.controls}>
-          <CallButton
-            label={call.muted ? t("Unmute") : t("Mute")}
-            ios={call.muted ? "mic.slash.fill" : "mic.fill"}
-            android={call.muted ? "mic-off" : "mic"}
-            selected={call.muted}
-            onPress={() => {
-              tapHaptic();
-              toggleMute();
-            }}
-          />
-          <CallSettings call={call} />
-          <View style={styles.controlsGap} />
-          <CallButton
-            label={t("End call")}
-            ios="xmark"
-            android="close"
-            destructive
-            onPress={() => {
-              tapHaptic();
-              endCall();
-            }}
-          />
-        </View>
+        <GestureDetector gesture={controlsDrag}>
+          <View>
+            {call.caption ? (
+              <Animated.Text
+                entering={quietEntering}
+                exiting={quietExiting}
+                accessibilityLiveRegion="polite"
+                style={[styles.caption, { color: tokens.mutedForeground }]}
+              >
+                {call.caption}
+              </Animated.Text>
+            ) : null}
+            <View style={styles.controls}>
+              <CallButton
+                label={call.muted ? t("Unmute") : t("Mute")}
+                ios={call.muted ? "mic.slash.fill" : "mic.fill"}
+                android={call.muted ? "mic-off" : "mic"}
+                selected={call.muted}
+                onPress={() => {
+                  tapHaptic();
+                  toggleMute();
+                }}
+              />
+              <CallSettings call={call} />
+              <View style={styles.controlsGap} />
+              <CallButton
+                label={t("End call")}
+                ios="xmark"
+                android="close"
+                destructive
+                onPress={() => {
+                  tapHaptic();
+                  endCall();
+                }}
+              />
+            </View>
+          </View>
+        </GestureDetector>
       </Animated.View>
     </View>
   );
