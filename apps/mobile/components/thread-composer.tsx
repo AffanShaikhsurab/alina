@@ -377,7 +377,8 @@ export function ThreadComposer({
   const popoverStyle = {
     flexShrink: 1,
     marginTop: 12,
-    borderRadius: 20,
+    // The same corners as the composer field below it.
+    borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
     backgroundColor: tokens.popover,
@@ -407,12 +408,12 @@ export function ThreadComposer({
                 key={mentionChipKey(mention)}
                 first={index === 0}
                 label={t("@{name}", { name: mention.name })}
+                icon={<MentionOptionIcon mention={mention} />}
                 onPress={() => {
                   selectionHaptic();
                   insertMention(mention);
                 }}
               >
-                <MentionOptionIcon mention={mention} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: tokens.foreground, fontSize: 15 }}>{mention.name}</Text>
                   {mention.subtitle ? (
@@ -492,14 +493,16 @@ export function ThreadComposer({
                 key={`command:${command}`}
                 first={nextRowIsFirst()}
                 label={commandLabel(command, t)}
+                icon={
+                  <NativeSymbol
+                    ios={COMMAND_SYMBOLS[command].ios}
+                    android={COMMAND_SYMBOLS[command].android}
+                    size={17}
+                    color={tokens.mutedForeground}
+                  />
+                }
                 onPress={() => runCommand(command)}
               >
-                <NativeSymbol
-                  ios={COMMAND_SYMBOLS[command].ios}
-                  android={COMMAND_SYMBOLS[command].android}
-                  size={16}
-                  color={tokens.mutedForeground}
-                />
                 <Text style={{ color: tokens.foreground, fontSize: 15 }}>
                   {commandLabel(command, t)}
                 </Text>
@@ -510,17 +513,19 @@ export function ThreadComposer({
                 key={skill.id}
                 first={nextRowIsFirst()}
                 label={t("Skill {name}", { name: skill.name })}
+                icon={
+                  <NativeSymbol
+                    ios="cube"
+                    android="cube-outline"
+                    size={17}
+                    color={tokens.mutedForeground}
+                  />
+                }
                 onPress={() => {
                   selectionHaptic();
                   insertSkill(skill);
                 }}
               >
-                <NativeSymbol
-                  ios="cube"
-                  android="cube-outline"
-                  size={16}
-                  color={tokens.mutedForeground}
-                />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: tokens.foreground, fontSize: 15 }}>{skill.name}</Text>
                   <Text
@@ -537,14 +542,16 @@ export function ThreadComposer({
                 key={action.id}
                 first={nextRowIsFirst()}
                 label={t(action.label)}
+                icon={
+                  <NativeSymbol
+                    ios="gearshape"
+                    android="settings-outline"
+                    size={17}
+                    color={tokens.mutedForeground}
+                  />
+                }
                 onPress={() => runSlashAction(action.id)}
               >
-                <NativeSymbol
-                  ios="gearshape"
-                  android="settings-outline"
-                  size={16}
-                  color={tokens.mutedForeground}
-                />
                 <Text style={{ color: tokens.foreground, fontSize: 15 }}>{t(action.label)}</Text>
               </PopoverRow>
             ))}
@@ -826,17 +833,26 @@ function commandLabel(id: ChatCommandId, t: (message: string) => string): string
   return t("Context");
 }
 
-/** One row of a composer popover: hairline above all but the first, a fill while pressed. */
+const ROW_INSET = 16;
+const ROW_GAP = 12;
+const ROW_ICON = 28;
+
+/**
+ * One row of a composer popover: the icon in a fixed slot so every label starts on one line, a
+ * hairline above all but the first starting at that label, and a fill while pressed.
+ */
 function PopoverRow({
   label,
   first,
   selected,
+  icon,
   onPress,
   children,
 }: {
   label: string;
   first: boolean;
   selected?: boolean;
+  icon?: ReactNode;
   onPress: () => void;
   children: ReactNode;
 }) {
@@ -850,15 +866,31 @@ function PopoverRow({
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
-        gap: 12,
+        gap: ROW_GAP,
         minHeight: 48,
-        paddingHorizontal: 16,
+        paddingHorizontal: ROW_INSET,
         paddingVertical: 10,
-        borderTopWidth: first ? 0 : StyleSheet.hairlineWidth,
-        borderTopColor: tokens.border,
         backgroundColor: pressed ? tokens.muted : undefined,
       })}
     >
+      {first ? null : (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 0,
+            start: icon ? ROW_INSET + ROW_ICON + ROW_GAP : ROW_INSET,
+            end: 0,
+            height: StyleSheet.hairlineWidth,
+            backgroundColor: tokens.border,
+          }}
+        />
+      )}
+      {icon ? (
+        <View style={{ width: ROW_ICON, alignItems: "center", justifyContent: "center" }}>
+          {icon}
+        </View>
+      ) : null}
       {children}
     </Pressable>
   );
