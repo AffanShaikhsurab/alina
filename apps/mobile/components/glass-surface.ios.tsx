@@ -26,9 +26,16 @@ export function GlassSurface({
       cornerRadius,
     }),
   ];
+  // The glass fills its box exactly. A hosting view respects safe areas by default, so near the
+  // home indicator or the keyboard SwiftUI would shrink the shape into a blob above the content.
   return (
     <View style={style}>
-      <Host colorScheme={scheme} pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Host
+        colorScheme={scheme}
+        ignoreSafeArea="all"
+        pointerEvents="none"
+        style={StyleSheet.absoluteFill}
+      >
         {shape === "circle" ? (
           <Circle modifiers={modifiers} />
         ) : shape === "roundedRectangle" ? (
