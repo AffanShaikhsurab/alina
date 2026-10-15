@@ -9,7 +9,7 @@ import { CallCard } from "../components/CallCard";
 import type { CallDeps, DictationHandlers } from "./call-session";
 import { endCall, startCall } from "./call-session";
 
-const { activeTags, useKeepAwake, menu, push } = vi.hoisted(() => ({
+const { activeTags, useKeepAwake, menu, push, motion } = vi.hoisted(() => ({
   activeTags: new Set<string>(),
   useKeepAwake: vi.fn(),
   menu: {
@@ -17,7 +17,22 @@ const { activeTags, useKeepAwake, menu, push } = vi.hoisted(() => ({
     press: (_id: string) => {},
   },
   push: vi.fn(),
+  // Timing animations finish at once unless a test holds them to look mid-motion.
+  motion: { hold: false, pending: [] as Array<() => void> },
 }));
+
+function finishMotion() {
+  act(() => {
+    const pending = motion.pending.splice(0);
+    for (const done of pending) done();
+  });
+}
+
+type Style = Record<string, unknown>;
+function flatStyle(style: unknown): Style {
+  if (Array.isArray(style)) return Object.assign({}, ...style.map(flatStyle));
+  return style && typeof style === "object" ? (style as Style) : {};
+}
 
 vi.mock("expo-keep-awake", () => ({ useKeepAwake }));
 vi.mock("expo-router", () => ({ useRouter: () => ({ push }) }));
@@ -35,7 +50,7 @@ vi.mock("@expo/ui/community/menu", () => ({
 }));
 vi.mock("react-native-reanimated", async () => {
   const { createElement: h } = await import("react");
-  // Every preset and modifier chain (FadeIn.duration(...).springify()...) is inert here.
+  // Every preset and modifier chain (FadeIn.duration(...).easing(...)) is inert here.
   const builder: unknown = new Proxy(() => builder, { get: () => builder });
   const View = ({ children }: { children?: ReactNode }) => h("div", null, children);
   const Text = ({ children }: { children?: ReactNode }) => h("span", null, children);
@@ -46,6 +61,8 @@ vi.mock("react-native-reanimated", async () => {
     FadeOut: builder,
     FadeOutUp: builder,
     Easing: builder,
+    Extrapolation: { CLAMP: "clamp" },
+    ReduceMotion: { Never: "never", System: "system" },
     useReducedMotion: () => true,
     useSharedValue: (value: number) => ({ value }),
     useAnimatedStyle: () => ({}),
@@ -53,8 +70,23 @@ vi.mock("react-native-reanimated", async () => {
     interpolate: () => 0,
     withRepeat: () => 0,
     withSequence: () => 0,
-    withSpring: () => 0,
-    withTiming: () => 0,
+    withTiming: (value: number, _config?: unknown, done?: (finished: boolean) => void) => {
+      if (done) {
+        if (motion.hold) motion.pending.push(() => done(true));
+        else done(true);
+      }
+      return value;
+    },
+  };
+});
+vi.mock("react-native-worklets", () => ({
+  scheduleOnRN: (fn: (...args: unknown[]) => void, ...args: unknown[]) => fn(...args),
+}));
+vi.mock("react-native-gesture-handler", () => {
+  const pan: unknown = new Proxy(() => pan, { get: () => pan });
+  return {
+    Gesture: { Pan: () => pan },
+    GestureDetector: ({ children }: { children?: ReactNode }) => children,
   };
 });
 vi.mock("react-native-safe-area-context", () => ({
@@ -77,7 +109,8 @@ vi.mock("react-native", () => {
     BackHandler: { addEventListener: () => ({ remove: () => undefined }) },
     Keyboard: { dismiss: () => undefined },
     Platform: { OS: "ios", Version: 18 },
-    StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1 },
+    StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1, absoluteFill: {} },
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
   };
 });
 vi.mock("../components/motion", async () => {
@@ -101,11 +134,31 @@ vi.mock("../components/motion", async () => {
       ),
     quietEntering: undefined,
     quietExiting: undefined,
+    easeOut: undefined,
+    easeInOut: undefined,
   };
 });
-vi.mock("../components/glass-surface", () => ({
-  GlassSurface: ({ children }: { children?: ReactNode }) => children,
-}));
+vi.mock("../components/glass-surface", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    GlassSurface: ({
+      children,
+      shape,
+      style,
+    }: {
+      children?: ReactNode;
+      shape?: string;
+      style?: unknown;
+    }) => {
+      const { width, height } = flatStyle(style);
+      return h(
+        "div",
+        { "data-glass": shape ?? "capsule", "data-width": width, "data-height": height },
+        children,
+      );
+    },
+  };
+});
 vi.mock("./haptics", () => ({ selectionHaptic: vi.fn(), tapHaptic: vi.fn() }));
 vi.mock("./appearance", () => ({ mobileTokens: () => ({}) }));
 vi.mock("expo-secure-store", () => ({
@@ -133,7 +186,10 @@ vi.mock("./i18n", () => {
   return { useI18n: () => ({ t }), t, getActiveUiLocale: () => "en" };
 });
 vi.mock("../components/bot-avatar", () => ({ BotAvatar: () => null }));
-vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => null }));
+vi.mock("../components/native-symbol", async () => {
+  const { createElement: h } = await import("react");
+  return { NativeSymbol: ({ ios }: { ios: string }) => h("i", { "data-symbol": ios }) };
+});
 vi.mock("expo-file-system", () => ({ File: class {} }));
 vi.mock("./voice", () => ({ speakText: vi.fn(), stopSpeaking: vi.fn() }));
 vi.mock("./dictation", () => ({ available: vi.fn(), listen: vi.fn() }));
@@ -196,6 +252,8 @@ describe("CallCard", () => {
   });
 
   afterEach(() => {
+    motion.hold = false;
+    motion.pending.length = 0;
     act(() => {
       endCall();
       root.unmount();
@@ -232,6 +290,54 @@ describe("CallCard", () => {
       expect(container.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
     }
     press("End call");
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it("draws each round control as one glass circle the button's full size around its icon", async () => {
+    await startOnScreen(callDeps());
+    for (const [label, size, symbol] of [
+      ["Minimise call", 44, "chevron.up"],
+      ["Mute", 56, "mic.fill"],
+      ["Call settings", 56, "gearshape.fill"],
+    ] as const) {
+      const control = container.querySelector(`[aria-label="${label}"]`);
+      const glass = control?.firstElementChild;
+      expect(glass?.getAttribute("data-glass")).toBe("circle");
+      expect(glass?.getAttribute("data-width")).toBe(String(size));
+      expect(glass?.getAttribute("data-height")).toBe(String(size));
+      expect(glass?.childElementCount).toBe(1);
+      expect(glass?.firstElementChild?.getAttribute("data-symbol")).toBe(symbol);
+    }
+    // Hanging up is a solid red fill, never glass.
+    expect(button("End call")?.querySelector("[data-glass]")).toBeNull();
+  });
+
+  it("keeps the call on screen until its closing motion ends, then leaves the chat", async () => {
+    await startOnScreen(callDeps());
+    motion.hold = true;
+    press("End call");
+    // The session is over at once (screen may sleep again), but the view is still fading out.
+    expect(activeTags.has("rakazo-call")).toBe(false);
+    expect(container.textContent).toContain("Ada");
+    expect(motion.pending).toHaveLength(1);
+    finishMotion();
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it("slides the call away before it rests as a pill, and fades the pill out on hang-up", async () => {
+    await startOnScreen(callDeps());
+    motion.hold = true;
+    press("Minimise call");
+    // Both are up while the call moves out of the way of the pill.
+    expect(button("Minimise call")).not.toBeNull();
+    expect(button("On a call with Ada")).not.toBeNull();
+    finishMotion();
+    expect(button("Minimise call")).toBeNull();
+    expect(button("On a call with Ada")).not.toBeNull();
+
+    press("End call");
+    expect(button("On a call with Ada")).not.toBeNull();
+    finishMotion();
     expect(container.childElementCount).toBe(0);
   });
 
