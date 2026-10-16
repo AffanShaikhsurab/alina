@@ -70,10 +70,54 @@ const SARVAM_SPEAKERS = [
   "rupali",
 ];
 
-const SARVAM_VOICES: VoiceInfo[] = SARVAM_SPEAKERS.map((id) => ({
-  id,
-  label: id.charAt(0).toUpperCase() + id.slice(1),
-}));
+/** `bulbul:v4-flash` model, picked by its persona voices (`<name>_<lang>_<style>`). */
+const V4_FLASH_MODEL = "bulbul:v4-flash";
+
+/** `bulbul:v4-flash` English and English–Hindi personas (Sarvam's catalog, 2026). */
+const SARVAM_V4_SPEAKERS = [
+  "shubh_enhi_companion",
+  "ishita_enhi_companion",
+  "sanchita_enhi_companion",
+  "shalini_enhi_companion",
+  "simran_enhi_companion",
+  "ishita_enhi_customer",
+  "shalini_enhi_customer",
+  "simran_enhi_customer",
+  "sunny_enhi_customer",
+  "shubh_enhi_ads",
+  "shubh_enhi_banking",
+  "sanchita_en_companion",
+  "aparna_en_companion",
+  "shalini_en_companion",
+  "dev_en_conversational",
+  "roopa_en_conversational",
+  "amelia_en_conversational",
+  "sophia_en_conversational",
+  "deven_en_conversation",
+  "simran_en_conversation",
+  "zarina_en_conversation",
+  "aparna_en_edtech",
+  "shubh_en_narration",
+  "simran_en_therapist",
+];
+
+/** A v4 persona id names its language in the middle token. */
+function isV4FlashVoice(voiceId: string | undefined): boolean {
+  return Boolean(voiceId && /^[a-z]+_[a-z]+_[a-z_]+$/.test(voiceId));
+}
+
+function capitalise(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+const SARVAM_VOICES: VoiceInfo[] = [
+  ...SARVAM_SPEAKERS.map((id) => ({ id, label: capitalise(id) })),
+  ...SARVAM_V4_SPEAKERS.map((id) => {
+    const [name = id, lang = "", ...style] = id.split("_");
+    const language = lang === "enhi" ? "English–Hindi" : "English";
+    return { id, label: `${capitalise(name)} · ${style.join(" ")} · ${language} (v4 Flash)` };
+  }),
+];
 
 export class SarvamVoiceProvider implements VoiceProvider {
   describe(): AdapterDescriptor<VoiceCapabilities> {
@@ -131,10 +175,12 @@ export class SarvamVoiceProvider implements VoiceProvider {
         language_code:
           setting(process.env.SARVAM_TTS_LANGUAGE, LANGUAGE_PATTERN) ?? DEFAULT_LANGUAGE,
         speaker: request.voiceId,
-        model:
-          setting(request.model, MODEL_PATTERN) ??
-          setting(process.env.SARVAM_TTS_MODEL, MODEL_PATTERN) ??
-          DEFAULT_MODEL,
+        // A v4 Flash persona only exists on that model, so it always selects it.
+        model: isV4FlashVoice(request.voiceId)
+          ? V4_FLASH_MODEL
+          : (setting(request.model, MODEL_PATTERN) ??
+            setting(process.env.SARVAM_TTS_MODEL, MODEL_PATTERN) ??
+            DEFAULT_MODEL),
         output_audio_codec: "mp3",
         speech_sample_rate: SAMPLE_RATE,
       }),
